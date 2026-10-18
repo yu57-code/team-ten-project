@@ -1,0 +1,118 @@
+
+@page "/upload"
+@using Microsoft.AspNetCore.Components.Forms
+@using MudBlazor
+@inject ISnackbar Snackbar
+
+<PageTitle>病例上傳</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+
+    <MudText Typo="Typo.h4" GutterBottom="true">
+        病例上傳
+    </MudText>
+
+    <MudText Typo="Typo.body1" Class="mb-6">
+        請輸入病歷號碼並選擇 PDF 病例報告。
+    </MudText>
+
+    <MudPaper Class="pa-6" Elevation="2">
+
+        <MudTextField T="string"
+                      Label="病歷號碼 MRN"
+                      @bind-Value="_mrn"
+                      Variant="Variant.Outlined"
+                      Required="true"
+                      RequiredError="請輸入病歷號碼"
+                      Class="mb-4" />
+
+        <MudText Typo="Typo.subtitle1" Class="mb-2">
+            選擇病例報告（PDF）
+        </MudText>
+
+        <InputFile OnChange="OnFileSelected"
+                   accept=".pdf,application/pdf" />
+
+        @if (_selectedFile != null)
+        {
+            <MudAlert Severity="Severity.Info"
+                      Class="mt-4">
+                檔案名稱：@_selectedFile.Name
+                <br />
+                檔案大小：@(_selectedFile.Size / 1024) KB
+            </MudAlert>
+        }
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   FullWidth="true"
+                   Class="mt-6"
+                   OnClick="ValidateUpload">
+            檢查上傳資料
+        </MudButton>
+
+    </MudPaper>
+
+</MudContainer>
+
+@code {
+    private string _mrn = string.Empty;
+
+    private IBrowserFile? _selectedFile;
+
+    private const long MaxFileSize = 10 * 1024 * 1024;
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        _selectedFile = null;
+
+        var file = e.File;
+
+        if (!file.Name.EndsWith(
+                ".pdf",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            Snackbar.Add(
+                "只允許選擇 PDF 檔案",
+                Severity.Error);
+            return;
+        }
+
+        if (file.Size == 0 || file.Size > MaxFileSize)
+        {
+            Snackbar.Add(
+                "檔案必須大於 0 且不超過 10 MB",
+                Severity.Error);
+            return;
+        }
+
+        _selectedFile = file;
+
+        Snackbar.Add(
+            "已選擇 PDF 檔案",
+            Severity.Success);
+    }
+
+    private void ValidateUpload()
+    {
+        if (string.IsNullOrWhiteSpace(_mrn))
+        {
+            Snackbar.Add(
+                "請輸入病歷號碼",
+                Severity.Warning);
+            return;
+        }
+
+        if (_selectedFile == null)
+        {
+            Snackbar.Add(
+                "請選擇 PDF 檔案",
+                Severity.Warning);
+            return;
+        }
+
+        Snackbar.Add(
+            "前端檢查通過，尚未實際上傳",
+            Severity.Success);
+    }
+}
