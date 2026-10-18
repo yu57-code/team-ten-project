@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("ImagingAI.Api")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+979b727b80649782ce6327f85ec9ef572be59ca2")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+ee4cbfae4f18c5684fc58110086f222773b2d605")]
 [assembly: System.Reflection.AssemblyProductAttribute("ImagingAI.Api")]
 [assembly: System.Reflection.AssemblyTitleAttribute("ImagingAI.Api")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
