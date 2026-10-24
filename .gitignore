@@ -1,4 +1,7 @@
-## ==========================================
+git rm -r --cached backend/ImagingAI.Api/bin
+git rm -r --cached backend/ImagingAI.Api/obj
+git rm -r --cached frontend/ImagingAI.Web/bin
+git rm -r --cached frontend/ImagingAI.Web/obj## ==========================================
 ## 1. .NET / C# (Backend & Blazor)
 ## ==========================================
 [Bb]in/
@@ -80,3 +83,28 @@ $RECYCLE.BIN/
 docker/data/
 *.sqlite3
 *.db-journal
+
+## ==========================================
+## 7. 測試影像與 AI 模型快取 (OCR / Medical Data)
+## ==========================================
+# 測試圖片目錄（避免病歷影像外流）
+test_images/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+*.pdf
+
+# 排除但保留測試目錄結構（可選：讓資料夾存在但內容被忽略）
+# !test_images/.gitkeep
+
+# PaddleOCR / 深度學習本地自動下載的權重快取
+.paddleocr/
+.paddlenlp/
+inference/
+models/
+*.onnx
+*.pdparams
+*.pdopt
+*.pdmodel
