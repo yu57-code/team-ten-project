@@ -80,3 +80,10 @@ $RECYCLE.BIN/
 docker/data/
 *.sqlite3
 *.db-journal
+
+# .NET generated files
+**/bin/
+**/obj/
+
+# Visual Studio
+.vs/
