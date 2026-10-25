@@ -1,58 +1,35 @@
 var builder = WebApplication.CreateBuilder(args);
-
-// ========================================
-// 1. 註冊 Controller
-// ========================================
-builder.Services.AddControllers();
-
-// ========================================
-// 2. 註冊 Swagger
-// ========================================
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(options =>
-{
-    options.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
-    {
-        Title = "ImagingAI API",
-        Version = "v1",
-        Description = "AI 影像病例結構化平台後端 API"
-    });
-});
+builder.Services.AddSwaggerGen();
 
-// ========================================
-// 3. 建立應用程式
-// ========================================
 var app = builder.Build();
-
-// ========================================
-// 4. Swagger 設定
-// ========================================
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
-
-    app.UseSwaggerUI(options =>
-    {
-        options.SwaggerEndpoint(
-            "/swagger/v1/swagger.json",
-            "ImagingAI API v1"
-        );
-    });
+    app.UseSwaggerUI();
 }
-
-// ========================================
-// 5. Middleware
-// ========================================
 app.UseHttpsRedirection();
-
-app.UseAuthorization();
-
-// ========================================
-// 6. 對應 Controller
-// ========================================
-app.MapControllers();
-
-// ========================================
-// 7. 啟動
-// ========================================
+var summaries = new[]
+{
+    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
+};
+app.MapGet("/weatherforecast", () =>
+{
+    var forecast =  Enumerable.Range(1, 5).Select(index =>
+        new WeatherForecast
+        (
+            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
+            Random.Shared.Next(-20, 55),
+            summaries[Random.Shared.Next(summaries.Length)]
+        ))
+        .ToArray();
+    return forecast;
+})
+.WithName("GetWeatherForecast")
+.WithOpenApi();
 app.Run();
+
+record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
+{
+    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+}
