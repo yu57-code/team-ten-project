@@ -1,29 +1,40 @@
-## ==========================================
-## 1. .NET / C# (Backend & Blazor)
-## ==========================================
+# ==========================================
+# 1. .NET / C# (Backend & Blazor)
+# ==========================================
+
 [Bb]in/
 [Oo]bj/
 [Ll]og/
 [Ll]ogs/
+
 *.user
-*.userosv
+*.userosscache
 *.suo
 *.userprefs
+*.rsuser
+
+# Local application settings
 appsettings.Development.json
 appsettings.Local.json
+appsettings.*.Local.json
 
-## ==========================================
-## 2. Python (AI Services / Presidio / ML)
-## ==========================================
+# ==========================================
+# 2. Python (AI Services / Presidio / ML)
+# ==========================================
+
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+
+# Python virtual environments
 env/
 venv/
 .venv/
 ENV/
+
+# Python build artifacts
 build/
 develop-eggs/
 dist/
@@ -39,51 +50,105 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+
+# Python testing
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
 .coverage
+.coverage.*
 htmlcov/
 
-## ==========================================
-## 3. 機密金鑰與環境變數 (CRITICAL)
-## ==========================================
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# ==========================================
+# 3. AI Models / OCR Cache
+# ==========================================
+
+# Model cache
+.paddlex/
+.paddleocr/
+.cache/
+models/
+
+# Large model files
+*.onnx
+*.pdmodel
+*.pdiparams
+*.safetensors
+*.gguf
+*.pth
+*.pt
+*.ckpt
+
+# ==========================================
+# 4. Secrets / Environment Variables
+# ==========================================
+
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+
 *.key
 *.pem
 secrets.json
 
-## ==========================================
-## 4. IDE 與編輯器設定 (Visual Studio / VS Code)
-## ==========================================
+# Local secret files
+*secrets.local.json
+
+# ==========================================
+# 5. IDE / Visual Studio / VS Code
+# ==========================================
+
 .vs/
+
 .vscode/*
 !.vscode/settings.json
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
 *.swp
 *.*~
 
-## ==========================================
-## 5. 作業系統暫存檔
-## ==========================================
+# ==========================================
+# 6. Operating System
+# ==========================================
+
 Thumbs.db
 ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
 .DS_Store
 
-## ==========================================
-## 6. Docker & 資料庫本機持久化資料
-## ==========================================
+# ==========================================
+# 7. Docker / Database Local Data
+# ==========================================
+
 docker/data/
+
 *.sqlite3
 *.db-journal
 
-# .NET generated files
-**/bin/
-**/obj/
+# PostgreSQL local backup files
+*.dump
+*.backup
 
-# Visual Studio
-.vs/
+# ==========================================
+# 8. Temporary Files
+# ==========================================
+
+*.tmp
+*.temp
+*.bak
+
+# ==========================================
+# 9. Local Medical Test Data
+# ==========================================
+
+# Private medical reports and OCR outputs
+local-data/
+private-data/
+test-uploads/
+ocr-output/
