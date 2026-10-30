@@ -1,0 +1,252 @@
+@page "/reviewer/exceptions"
+@inject IExceptionService ExceptionService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>異常佇列｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="異常佇列 Exception Queue"
+            Subtitle="記錄各階段驗證失敗的病例；人工處理與修正後重新驗證，無法修正者標記並結案（不寫入 FHIR）。" />
+
+<FilterChips TValue="ExceptionCategory?" Options="CategoryOptions" Value="_category" ValueChanged="OnCategoryChanged" AriaLabel="依異常類別篩選" />
+
+@if (_items is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_items.Count == 0)
+{
+    <div class="ia-card empty-card">
+        <MudIcon Icon="@Icons.Material.Outlined.TaskAlt" Class="empty-icon" />
+        <div>
+            <div class="empty-title">目前沒有待處理的異常</div>
+            <p class="muted small">所有病例都已通過驗證，或已處理完畢。</p>
+        </div>
+    </div>
+}
+else
+{
+    <div class="layout">
+        @* ---------- 左：異常清單 ---------- *@
+        <section class="list" aria-label="異常清單">
+            @foreach (var item in FilteredItems)
+            {
+                <button type="button" class="@(item.Id == _selected?.Id ? "item is-on" : "item")" @onclick="() => Select(item)">
+                    <span class="item-top">
+                        <span class="ia-mono muted">@item.Id・@item.CaseId</span>
+                        <StatusBadge Tone="StatusStyles.Tone(item.Status)" Text="@ExceptionText.StatusLabel(item.Status)" />
+                    </span>
+                    <StatusBadge Tone="BadgeTone.Err" Text="@ExceptionText.CategoryLabel(item.Category)" />
+                    <span class="item-desc">@item.Description</span>
+                    <span class="item-meta">@item.CreatedAt.ToString("MM/dd HH:mm")・指派：@AssigneeText(item.Assignee)</span>
+                </button>
+            }
+            @if (!FilteredItems.Any())
+            {
+                <p class="muted small pad">這個類別目前沒有異常。</p>
+            }
+        </section>
+
+        @* ---------- 右：異常詳細與處理 ---------- *@
+        @if (_selected is not null)
+        {
+            <section class="ia-card detail">
+                <div class="detail-head">
+                    <div>
+                        <div class="title-row">
+                            <h2 class="detail-title">@ExceptionText.CategoryLabel(_selected.Category)</h2>
+                            <StatusBadge Tone="StatusStyles.Tone(_selected.Status)" Text="@ExceptionText.StatusLabel(_selected.Status)" />
+                        </div>
+                        <p class="muted small meta">
+                            <span class="ia-mono">@_selected.Id</span>・病例 <span class="ia-mono">@_selected.CaseId</span>・建立於 @_selected.CreatedAt.ToString("MM/dd HH:mm")・指派 @AssigneeText(_selected.Assignee)
+                        </p>
+                    </div>
+                    <MudButton Href="@($"/reviewer/review/{_selected.CaseId}")" Variant="Variant.Outlined" Class="ia-btn">
+                        檢視原始病歷與解析結果
+                    </MudButton>
+                </div>
+
+                <div class="reason"><b>異常原因：</b>@_selected.Description</div>
+
+                <div>
+                    <div class="sub-title">失敗位置</div>
+                    <ol class="track" aria-label="失敗位置">
+                        @for (var i = 0; i < ExceptionText.ValidationSteps.Count; i++)
+                        {
+                            var state = i < _selected.FailedStep ? "done" : i == _selected.FailedStep ? "fail" : "todo";
+                            <li class="track-step">
+                                <span class="@($"track-dot track-dot--{state}")" aria-hidden="true">
+                                    @(state == "done" ? "✓" : state == "fail" ? "!" : (i + 1).ToString())
+                                </span>
+                                <span class="@(state == "fail" ? "track-label is-fail" : "track-label")">@ExceptionText.ValidationSteps[i]</span>
+                                @if (state == "fail")
+                                {
+                                    <span class="ia-sr-only">（失敗）</span>
+                                }
+                            </li>
+                        }
+                    </ol>
+                </div>
+
+                <div class="compare">
+                    <table class="ia-table">
+                        <thead><tr><th>欄位</th><th>AI 擷取／系統值</th><th>比對來源</th><th>判定</th></tr></thead>
+                        <tbody>
+                            @foreach (var row in _selected.Comparisons)
+                            {
+                                <tr>
+                                    <td class="strong">@row.Field</td>
+                                    <td class="ia-mono">@row.Actual</td>
+                                    <td class="ia-mono">@row.Expected</td>
+                                    <td><StatusBadge Tone="StatusStyles.Tone(row.Level)" Text="@row.Verdict" /></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="fix">
+                    <h3 class="fix-title">人工處理與修正</h3>
+                    <div class="fix-fields">
+                        <div class="fix-field">
+                            <label class="ia-label" for="fix-value">@_selected.FixLabel</label>
+                            <input id="fix-value" class="ia-field" @bind="_fixValue" @bind:event="oninput" />
+                        </div>
+                        <div class="fix-field fix-field--sm">
+                            <label class="ia-label" for="fix-status">異常狀態</label>
+                            <select id="fix-status" class="ia-field" @bind="_status">
+                                <option value="@ExceptionStatus.InProgress">處理中</option>
+                                <option value="@ExceptionStatus.Pending">待處理</option>
+                                <option value="@ExceptionStatus.FixedPendingRevalidation">已修正，待重新驗證</option>
+                                <option value="@ExceptionStatus.Unresolvable">無法處理</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    @if (_selected.AllowMerge)
+                    {
+                        <MudCheckBox T="bool" @bind-Value="_merge" Color="Color.Tertiary" Class="merge"
+                                     Label="合併至既有病人資料（Patient），並更新報告的病人關聯" />
+                    }
+
+                    <div>
+                        <label class="ia-label" for="fix-note">處理說明</label>
+                        <textarea id="fix-note" class="ia-field" rows="2" placeholder="修正依據或無法處理的原因（必填，寫入稽核軌跡）"
+                                  @bind="_note" @bind:event="oninput"></textarea>
+                    </div>
+
+                    <div class="fix-actions">
+                        <span class="muted small">重新驗證將從「@_selected.RestartFrom」開始</span>
+                        <div class="buttons">
+                            <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--danger" Disabled="_busy" OnClick="MarkUnresolvableAsync">
+                                標記為無法處理
+                            </MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Tertiary" DropShadow="false" Class="ia-btn" Disabled="_busy" OnClick="ResolveAsync">
+                                修正後重新驗證
+                            </MudButton>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        }
+    </div>
+}
+
+@code {
+    /// <summary>從總覽或待覆核頁帶入的病例 ID，例如 /reviewer/exceptions?case=C-1023-0141。</summary>
+    [SupplyParameterFromQuery(Name = "case")]
+    public string? CaseFromQuery { get; set; }
+
+    private IReadOnlyList<ExceptionItem>? _items;
+    private ExceptionItem? _selected;
+    private ExceptionCategory? _category;
+
+    private string _fixValue = string.Empty;
+    private ExceptionStatus _status = ExceptionStatus.InProgress;
+    private bool _merge;
+    private string _note = string.Empty;
+    private bool _busy;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    private IEnumerable<ExceptionItem> FilteredItems =>
+        (_items ?? []).Where(e => _category is null || e.Category == _category);
+
+    private IReadOnlyList<ChipOption<ExceptionCategory?>> CategoryOptions =>
+    [
+        new(null, "全部", _items?.Count ?? 0),
+        .. Enum.GetValues<ExceptionCategory>().Select(c =>
+            new ChipOption<ExceptionCategory?>(c, ExceptionText.CategoryLabel(c), _items?.Count(e => e.Category == c) ?? 0)),
+    ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync(preferCaseId: CaseFromQuery);
+    }
+
+    private async Task LoadAsync(string? preferCaseId = null)
+    {
+        _items = await ExceptionService.GetOpenExceptionsAsync();
+        var next = (preferCaseId is null ? null : _items.FirstOrDefault(e => e.CaseId == preferCaseId))
+                   ?? FilteredItems.FirstOrDefault();
+        if (next is not null)
+        {
+            Select(next);
+        }
+        else
+        {
+            _selected = null;
+        }
+    }
+
+    private void OnCategoryChanged(ExceptionCategory? category)
+    {
+        _category = category;
+        if (_selected is null || (category is not null && _selected.Category != category))
+        {
+            var first = FilteredItems.FirstOrDefault();
+            if (first is not null)
+            {
+                Select(first);
+            }
+        }
+    }
+
+    private void Select(ExceptionItem item)
+    {
+        _selected = item;
+        _fixValue = item.FixValue;
+        _status = item.Status == ExceptionStatus.Pending ? ExceptionStatus.InProgress : item.Status;
+        _merge = false;
+        _note = string.Empty;
+    }
+
+    private string AssigneeText(string assignee) =>
+        string.IsNullOrEmpty(assignee) ? "未指派" : assignee == UserName ? "我" : assignee;
+
+    private async Task ResolveAsync()
+    {
+        _busy = true;
+        var result = await ExceptionService.ResolveAsync(_selected!.Id,
+            new ExceptionResolution(_fixValue, _status, _merge, _note), UserName);
+        _busy = false;
+        await AfterActionAsync(result);
+    }
+
+    private async Task MarkUnresolvableAsync()
+    {
+        _busy = true;
+        var result = await ExceptionService.MarkUnresolvableAsync(_selected!.Id, _note, UserName);
+        _busy = false;
+        await AfterActionAsync(result);
+    }
+
+    private async Task AfterActionAsync(OperationResult result)
+    {
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        if (result.Succeeded)
+        {
+            await LoadAsync();
+        }
+    }
+}

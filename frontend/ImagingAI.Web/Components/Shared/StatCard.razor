@@ -1,0 +1,39 @@
+@* 統計卡片（KPI）。設定 Href 時整張卡片可點擊。 *@
+
+@if (string.IsNullOrEmpty(Href))
+{
+    <div class="ia-card ia-stat">
+        <span class="ia-stat-label">@Label</span>
+        <span class="ia-stat-value" style="@ValueStyle">@Value</span>
+        @if (!string.IsNullOrEmpty(Note))
+        {
+            <span class="ia-stat-note">@Note</span>
+        }
+    </div>
+}
+else
+{
+    <a class="ia-card ia-stat" href="@Href">
+        <span class="ia-stat-label">@Label</span>
+        <span class="ia-stat-value" style="@ValueStyle">@Value</span>
+        @if (!string.IsNullOrEmpty(Note))
+        {
+            <span class="ia-stat-note">@Note</span>
+        }
+    </a>
+}
+
+@code {
+    [Parameter, EditorRequired] public string Label { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired] public string Value { get; set; } = string.Empty;
+
+    [Parameter] public string? Note { get; set; }
+
+    /// <summary>數字顏色，例如 #5B2BB5；未設定時使用一般文字色。</summary>
+    [Parameter] public string? ValueColor { get; set; }
+
+    [Parameter] public string? Href { get; set; }
+
+    private string? ValueStyle => ValueColor is null ? null : $"color: {ValueColor};";
+}

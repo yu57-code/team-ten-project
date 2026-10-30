@@ -1,0 +1,185 @@
+@page "/reviewer"
+@implements IDisposable
+@inject ICaseService CaseService
+@inject IUploadService UploadService
+@inject IAuthService Auth
+
+<PageTitle>總覽｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="總覽" Subtitle="追蹤所有病例的處理進度，僅需處理待覆核與異常病例。">
+    <Actions>
+        <div class="search">
+            <label for="overview-search" class="ia-sr-only">搜尋病例</label>
+            <input id="overview-search" class="ia-field search-input" type="search" placeholder="搜尋病例 ID、病歷號"
+                   @bind="_keyword" @bind:event="oninput" />
+            <MudIcon Icon="@Icons.Material.Outlined.Search" Class="search-icon" />
+        </div>
+        <MudButton Href="/reviewer/upload" Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                   Class="ia-btn" StartIcon="@Icons.Material.Filled.Add">
+            上傳病例
+        </MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_stats is not null)
+{
+    <section class="ia-stats">
+        <StatCard Label="待覆核" Value="@_stats.PendingReview.ToString()" ValueColor="#5B2BB5"
+                  Note="已通過結構化資料驗證" Href="/reviewer/review" />
+        <StatCard Label="異常佇列待處理" Value="@_stats.OpenExceptions.ToString()" ValueColor="#B91C1C"
+                  Note="@($"{_stats.ExceptionCategoryCount} 類異常・{_stats.ExceptionsAssignedToMe} 件指派給我")" Href="/reviewer/exceptions" />
+        <StatCard Label="處理中" Value="@_stats.Processing.ToString()" ValueColor="#1E40AF"
+                  Note="@($"地端 OCR {_stats.ProcessingLocal}・雲端解析 {_stats.ProcessingCloud}")" />
+        <StatCard Label="今日已寫入 FHIR" Value="@_stats.WrittenToFhirToday.ToString()" ValueColor="#14653A"
+                  Note="TW Core 驗證通過後寫入" />
+    </section>
+}
+
+<div class="layout">
+    @* ---------- 病例處理進度表 ---------- *@
+    <section class="ia-card cases">
+        <div class="cases-head">
+            <h2 class="ia-card-title">病例處理進度</h2>
+            <FilterChips TValue="CaseFilter" Options="FilterOptions" @bind-Value="_filter" AriaLabel="依狀態篩選" />
+        </div>
+        <div class="ia-table-wrap">
+            <table class="ia-table">
+                <thead>
+                    <tr>
+                        <th>病例 ID</th>
+                        <th>病歷號</th>
+                        <th>上傳時間</th>
+                        <th>目前階段</th>
+                        <th>狀態</th>
+                        <th><span class="ia-sr-only">操作</span></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var c in FilteredCases)
+                    {
+                        <tr class="@(c.CaseId == _selected?.CaseId ? "is-selected" : null)">
+                            <td class="ia-mono">@c.CaseId</td>
+                            <td class="ia-mono">@c.MaskedMrn</td>
+                            <td class="muted">@c.UploadedAt.ToString("MM/dd HH:mm")</td>
+                            <td class="stage">@StatusStyles.StageText(c)</td>
+                            <td><StatusBadge Tone="StatusStyles.Tone(c.Status)" Text="@c.StatusLabel" /></td>
+                            <td class="right">
+                                <button type="button" class="pick" @onclick="() => _selected = c">查看進度</button>
+                            </td>
+                        </tr>
+                    }
+                    @if (_cases is not null && !FilteredCases.Any())
+                    {
+                        <tr>
+                            <td colspan="6" class="empty">
+                                @if (_cases.Count == 0)
+                                {
+                                    <span>目前還沒有病例，請先到<a href="/reviewer/upload">上傳病例</a>上傳。</span>
+                                }
+                                else
+                                {
+                                    <span>沒有符合條件的病例</span>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    @* ---------- 選取病例的處理進度 ---------- *@
+    <section class="ia-card progress">
+        @if (_selected is null)
+        {
+            <p class="muted">點選左側「查看進度」以顯示病例的處理步驟。</p>
+        }
+        else
+        {
+            <div class="progress-head">
+                <h2 class="ia-card-title">處理進度</h2>
+                <span class="ia-mono id">@_selected.CaseId</span>
+            </div>
+
+            <ProcessSteps Items="StepViewBuilder.ForCase(_selected)" />
+
+            @if (_selected.Status == CaseStatus.PendingReview)
+            {
+                <MudButton Href="@($"/reviewer/review/{_selected.CaseId}")" Variant="Variant.Filled" Color="Color.Primary"
+                           DropShadow="false" FullWidth="true" Class="ia-btn">
+                    前往覆核
+                </MudButton>
+            }
+            else if (_selected.Status == CaseStatus.Exception)
+            {
+                <MudButton Href="@($"/reviewer/exceptions?case={_selected.CaseId}")" Variant="Variant.Filled" Color="Color.Primary"
+                           DropShadow="false" FullWidth="true" Class="ia-btn">
+                    前往異常處理
+                </MudButton>
+            }
+
+            <p class="progress-note">結構化資料驗證完成後自動進入「待覆核」，任何階段失敗會轉入異常佇列。</p>
+        }
+    </section>
+</div>
+
+@code {
+    public enum CaseFilter { All, PendingReview, Exception, Processing, Completed }
+
+    private static readonly IReadOnlyList<ChipOption<CaseFilter>> FilterOptions =
+    [
+        new(CaseFilter.All, "全部"),
+        new(CaseFilter.PendingReview, "待覆核"),
+        new(CaseFilter.Exception, "異常"),
+        new(CaseFilter.Processing, "處理中"),
+        new(CaseFilter.Completed, "已完成"),
+    ];
+
+    private IReadOnlyList<CaseRecord>? _cases;
+    private DashboardStats? _stats;
+    private CaseRecord? _selected;
+    private CaseFilter _filter = CaseFilter.All;
+    private string _keyword = string.Empty;
+
+    private IEnumerable<CaseRecord> FilteredCases => (_cases ?? [])
+        .Where(c => _filter switch
+        {
+            CaseFilter.PendingReview => c.Status == CaseStatus.PendingReview,
+            CaseFilter.Exception => c.Status == CaseStatus.Exception,
+            CaseFilter.Processing => c.Status == CaseStatus.Processing,
+            CaseFilter.Completed => c.Status is CaseStatus.Completed or CaseStatus.Duplicate or CaseStatus.Closed,
+            _ => true,
+        })
+        .Where(c => string.IsNullOrWhiteSpace(_keyword)
+                    || c.CaseId.Contains(_keyword.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || c.MaskedMrn.Contains(_keyword.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        _selected = _cases?.FirstOrDefault(c => c.Status == CaseStatus.PendingReview) ?? _cases?.FirstOrDefault();
+
+        // 處理中的病例進度更新時，自動刷新畫面
+        UploadService.JobChanged += OnJobChanged;
+    }
+
+    private async Task LoadAsync()
+    {
+        var userName = Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+        _cases = await CaseService.GetCasesAsync();
+        _stats = await CaseService.GetDashboardStatsAsync(userName);
+
+        if (_selected is not null)
+        {
+            _selected = _cases.FirstOrDefault(c => c.CaseId == _selected.CaseId) ?? _selected;
+        }
+    }
+
+    private void OnJobChanged(UploadJob job) => _ = InvokeAsync(async () =>
+    {
+        await LoadAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose() => UploadService.JobChanged -= OnJobChanged;
+}

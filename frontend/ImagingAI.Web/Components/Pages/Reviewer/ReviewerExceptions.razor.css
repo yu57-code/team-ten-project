@@ -1,0 +1,256 @@
+/* 異常佇列 */
+
+.muted {
+    color: #5A6577;
+}
+
+.small {
+    margin: 0;
+    font-size: 13px;
+}
+
+.pad {
+    padding: 8px 4px;
+}
+
+.empty-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 24px;
+}
+
+.empty-card ::deep .empty-icon {
+    width: 32px;
+    height: 32px;
+    color: #14653A;
+}
+
+.empty-title {
+    font-size: 16px;
+    font-weight: 700;
+}
+
+.layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+/* ---------- 清單 ---------- */
+.list {
+    flex: 1 1 340px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.item {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 14px 16px;
+    border: 1px solid #E2E6EC;
+    border-radius: 10px;
+    background: #FFFFFF;
+    color: #16202E;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+    .item:hover {
+        border-color: #CBD2DC;
+    }
+
+    .item.is-on {
+        border-color: #5B2BB5;
+        background: #F7F3FE;
+        box-shadow: inset 3px 0 0 #5B2BB5;
+    }
+
+.item-top {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.item-desc {
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.item-meta {
+    font-size: 12px;
+    color: #5A6577;
+}
+
+/* ---------- 詳細 ---------- */
+.detail {
+    flex: 2 1 560px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 22px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.detail-title {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+}
+
+.meta {
+    margin-top: 6px;
+}
+
+.reason {
+    padding: 12px 14px;
+    border: 1px solid #F0B4B4;
+    border-radius: 8px;
+    background: #FFF6F6;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+    .reason b {
+        color: #A61B1B;
+    }
+
+.sub-title {
+    margin-bottom: 10px;
+    font-size: 13px;
+    font-weight: 600;
+    color: #3A4556;
+}
+
+/* 失敗位置（9 步） */
+.track {
+    margin: 0;
+    padding: 0 0 4px;
+    list-style: none;
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+}
+
+.track-step {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 56px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    text-align: center;
+}
+
+.track-dot {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    color: #FFFFFF;
+}
+
+.track-dot--done { background: #1E3A8A; }
+.track-dot--fail { background: #DC2626; }
+.track-dot--todo { background: #DCE1E8; color: #4A5568; }
+
+.track-label {
+    font-size: 11px;
+    color: #4A5568;
+}
+
+    .track-label.is-fail {
+        color: #A61B1B;
+        font-weight: 700;
+    }
+
+.compare {
+    border: 1px solid #E2E6EC;
+    border-radius: 8px;
+    overflow-x: auto;
+}
+
+.strong {
+    font-weight: 600;
+}
+
+/* ---------- 人工處理 ---------- */
+.fix {
+    padding: 18px;
+    border: 1px solid #DDD0F7;
+    border-radius: 10px;
+    background: #F7F3FE;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.fix-title {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 700;
+    color: #5B2BB5;
+}
+
+.fix-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.fix-field {
+    flex: 1 1 240px;
+}
+
+.fix-field--sm {
+    flex-basis: 200px;
+}
+
+.fix ::deep .merge .mud-typography {
+    font-size: 14px;
+}
+
+.fix-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}

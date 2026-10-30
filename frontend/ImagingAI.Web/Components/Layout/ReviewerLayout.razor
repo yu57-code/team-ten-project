@@ -1,0 +1,42 @@
+@* 醫療／資料審核人員版面：深藍側欄＋內容區。
+   Components/Pages/Reviewer 底下的頁面透過該資料夾的 _Imports.razor 自動套用。 *@
+@inherits LayoutComponentBase
+@inject IAuthService Auth
+@inject INavBadgeService Badges
+
+<MudThemeProvider Theme="AppThemes.Reviewer" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<div class="ia-shell ia-shell--reviewer">
+    <AppSidebar Subtitle="醫療／資料審核人員" Items="_items" User="CurrentUser" />
+    <main class="ia-main">
+        @Body
+    </main>
+</div>
+
+@code {
+    private IReadOnlyList<NavItem> _items = [];
+
+    // 未登入就直接開啟網址時（例如重新整理頁面），先以示範使用者顯示，方便展示與測試。
+    private UserAccount CurrentUser =>
+        Auth.CurrentUser is { Role: UserRole.Reviewer } user ? user : Auth.GetDemoUser(UserRole.Reviewer);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var counts = await Badges.GetReviewerCountsAsync();
+
+        _items =
+        [
+            new("總覽", "/reviewer", Icons.Material.Outlined.GridView, NavLinkMatch.All),
+            new("上傳病例", "/reviewer/upload", Icons.Material.Outlined.FileUpload),
+            new("待覆核", "/reviewer/review", Icons.Material.Outlined.FactCheck,
+                Badge: counts.PendingReview, BadgeTone: NavBadgeTone.Purple),
+            new("異常佇列", "/reviewer/exceptions", Icons.Material.Outlined.WarningAmber,
+                Badge: counts.OpenExceptions, BadgeTone: NavBadgeTone.Red),
+            new("個人處理紀錄", "/reviewer/history", Icons.Material.Outlined.History),
+            new("稽核軌跡", "/reviewer/audit", Icons.Material.Outlined.VerifiedUser),
+        ];
+    }
+}
