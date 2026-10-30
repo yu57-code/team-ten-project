@@ -1,0 +1,63 @@
+@* 共用側邊選單：品牌、導覽項目（含數字徽章）、使用者資訊與登出。
+   顏色由外層 .ia-shell--reviewer / .ia-shell--admin 的 CSS 變數決定。 *@
+@inject IAuthService Auth
+@inject NavigationManager Nav
+
+<aside class="ia-sidebar">
+    <div class="ia-brand">
+        <div class="ia-brand-logo" aria-hidden="true">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+        </div>
+        <div>
+            <div class="ia-brand-name">影像病例結構化平台</div>
+            <div class="ia-brand-sub">@Subtitle</div>
+        </div>
+    </div>
+
+    <MudNavMenu Class="ia-nav">
+        @foreach (var item in Items)
+        {
+            <MudNavLink Href="@item.Href" Match="@item.Match" Icon="@item.Icon" Ripple="false">
+                <span class="ia-nav-text">@item.Text</span>
+                @if (item.Badge is > 0)
+                {
+                    <span class="@BadgeClass(item)">@item.Badge</span>
+                }
+            </MudNavLink>
+        }
+    </MudNavMenu>
+
+    <div class="ia-sidebar-spacer"></div>
+
+    <div class="ia-userbox">
+        <MudAvatar Class="ia-avatar">@User.AvatarText</MudAvatar>
+        <div class="ia-user-meta">
+            <div class="ia-user-name">@User.DisplayName</div>
+            <div class="ia-user-sub">@User.Username・@(User.MfaEnabled ? "MFA 已驗證" : "MFA 未驗證")</div>
+        </div>
+        <MudIconButton Icon="@Icons.Material.Outlined.Logout"
+                       Size="Size.Small"
+                       Class="ia-logout"
+                       aria-label="登出"
+                       title="登出"
+                       OnClick="SignOutAsync" />
+    </div>
+</aside>
+
+@code {
+    /// <summary>品牌名稱下方的角色說明，例如「醫療／資料審核人員」。</summary>
+    [Parameter, EditorRequired] public string Subtitle { get; set; } = string.Empty;
+
+    [Parameter, EditorRequired] public IReadOnlyList<NavItem> Items { get; set; } = [];
+
+    [Parameter, EditorRequired] public UserAccount User { get; set; } = default!;
+
+    private static string BadgeClass(NavItem item) =>
+        item.BadgeTone == NavBadgeTone.Purple ? "ia-nav-badge ia-nav-badge--purple" : "ia-nav-badge ia-nav-badge--red";
+
+    private async Task SignOutAsync()
+    {
+        await Auth.SignOutAsync();
+        Nav.NavigateTo("/login");
+    }
+}

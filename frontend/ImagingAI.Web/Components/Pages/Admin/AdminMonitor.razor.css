@@ -1,0 +1,78 @@
+/* 系統監控 */
+
+.updated {
+    font-size: 13px;
+    color: #5A6577;
+}
+
+.section-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.services {
+    overflow: hidden;
+}
+
+.service-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+}
+
+.service {
+    padding: 16px 18px;
+    border-top: 1px solid #EDF0F2;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.service-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.service-name {
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.service-desc {
+    font-size: 13px;
+    color: #5A6577;
+}
+
+.service-metric {
+    font-size: 12px;
+    color: #3A4556;
+}
+
+.service-time {
+    font-size: 12px;
+    color: #5A6577;
+}
+
+.tasks {
+    overflow: hidden;
+}
+
+.muted {
+    color: #5A6577;
+}
+
+.error {
+    min-width: 240px;
+    color: #A61B1B;
+}
+
+.empty {
+    padding: 28px 14px;
+    text-align: center;
+    color: #5A6577;
+}

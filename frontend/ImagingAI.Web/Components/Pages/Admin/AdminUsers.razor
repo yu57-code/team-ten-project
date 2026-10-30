@@ -1,0 +1,204 @@
+@page "/admin/users"
+@inject IUserService UserService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>使用者與角色權限｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="使用者與角色權限"
+            Subtitle="管理 UserAccount 與 Role；所有帳號皆須啟用 MFA，權限變更會寫入稽核軌跡。">
+    <Actions>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                   StartIcon="@Icons.Material.Filled.Add" OnClick="OpenCreate">
+            新增使用者
+        </MudButton>
+    </Actions>
+</PageHeader>
+
+@* ---------- 新增／編輯表單 ---------- *@
+@if (_formOpen)
+{
+    <section class="ia-card form">
+        <h2 class="ia-card-title">@(_editingUsername is null ? "新增使用者" : $"編輯 {_editingUsername}")</h2>
+        <div class="form-grid">
+            <div>
+                <label class="ia-label" for="user-name">帳號</label>
+                <input id="user-name" class="ia-field ia-mono" placeholder="英數字，可包含 . _ -" disabled="@(_editingUsername is not null)"
+                       @bind="_draft.Username" @bind:event="oninput" />
+            </div>
+            <div>
+                <label class="ia-label" for="user-display">姓名</label>
+                <input id="user-display" class="ia-field" placeholder="顯示在側欄與稽核軌跡的名稱"
+                       @bind="_draft.DisplayName" @bind:event="oninput" />
+            </div>
+            <div>
+                <label class="ia-label" for="user-role">角色</label>
+                <select id="user-role" class="ia-field" @bind="_draft.Role">
+                    <option value="@UserRole.Reviewer">醫療／資料審核人員</option>
+                    <option value="@UserRole.Admin">系統管理／維護人員</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-actions">
+            <span class="muted small">新帳號首次登入時需綁定 MFA 驗證器。</span>
+            <div class="buttons">
+                <MudButton Variant="Variant.Outlined" Class="ia-btn" OnClick="() => _formOpen = false">取消</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                           Disabled="_busy" OnClick="SaveAsync">儲存</MudButton>
+            </div>
+        </div>
+    </section>
+}
+
+@* ---------- 帳號清單 ---------- *@
+<section class="ia-card users">
+    <div class="toolbar">
+        <div class="search">
+            <label for="user-search" class="ia-sr-only">搜尋使用者</label>
+            <input id="user-search" class="ia-field" type="search" placeholder="搜尋帳號或姓名"
+                   @bind="_keyword" @bind:event="oninput" />
+        </div>
+        <div class="role-filter">
+            <label for="role-filter" class="ia-sr-only">角色</label>
+            <select id="role-filter" class="ia-field" @bind="_roleFilter">
+                <option value="">全部角色</option>
+                <option value="@UserRole.Reviewer">醫療／資料審核人員</option>
+                <option value="@UserRole.Admin">系統管理／維護人員</option>
+            </select>
+        </div>
+    </div>
+    <div class="ia-table-wrap">
+        <table class="ia-table">
+            <thead>
+                <tr><th>帳號</th><th>姓名</th><th>角色</th><th>MFA</th><th>最後登入</th><th>啟用</th><th><span class="ia-sr-only">操作</span></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var user in FilteredUsers)
+                {
+                    var isSelf = string.Equals(user.Username, Auth.CurrentUser?.Username, StringComparison.OrdinalIgnoreCase);
+                    <tr>
+                        <td class="ia-mono">@user.Username</td>
+                        <td>@user.DisplayName</td>
+                        <td>
+                            <StatusBadge Tone="@(user.Role == UserRole.Admin ? BadgeTone.Adm : BadgeTone.Info)"
+                                         Text="@(user.Role == UserRole.Admin ? "系統管理／維護人員" : "醫療／資料審核人員")" />
+                        </td>
+                        <td><StatusBadge Tone="@(user.MfaBound ? BadgeTone.Ok : BadgeTone.Warn)" Text="@(user.MfaBound ? "已綁定" : "未綁定")" /></td>
+                        <td class="muted">@(user.LastLoginAt?.ToString("MM/dd HH:mm") ?? "—")</td>
+                        <td>
+                            <MudSwitch T="bool" Value="user.IsActive" Color="Color.Primary" Disabled="isSelf"
+                                       ValueChanged="@((bool v) => SetActiveAsync(user, v))"
+                                       aria-label="@($"{(user.IsActive ? "停用" : "啟用")} {user.Username}")"
+                                       title="@(isSelf ? "無法停用自己的帳號" : null)" />
+                        </td>
+                        <td class="right">
+                            <div class="row-actions">
+                                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" OnClick="() => OpenEdit(user)">編輯</MudButton>
+                                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" Disabled="!user.MfaBound"
+                                           OnClick="() => ResetMfaAsync(user)">重設 MFA</MudButton>
+                            </div>
+                        </td>
+                    </tr>
+                }
+                @if (_users is not null && !FilteredUsers.Any())
+                {
+                    <tr>
+                        <td colspan="7" class="empty">
+                            @(_users.Count == 0 ? "目前沒有帳號。使用者第一次登入時會自動建立，也可以按「新增使用者」。" : "沒有符合條件的帳號")
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@* ---------- 角色權限對照 ---------- *@
+<section class="ia-card permissions">
+    <div class="section-head">
+        <h2 class="ia-card-title">角色權限對照</h2>
+        <p class="ia-card-sub">依使用案例圖劃分；兩種角色共用單一入口登入，審核人員只能看到病例相關的稽核軌跡。</p>
+    </div>
+    <div class="ia-table-wrap">
+        <table class="ia-table">
+            <thead><tr><th>功能（使用案例）</th><th>醫療／資料審核人員</th><th>系統管理／維護人員</th></tr></thead>
+            <tbody>
+                @foreach (var permission in RolePermissions.All)
+                {
+                    <tr>
+                        <td>@permission.Feature</td>
+                        <td><span class="@(permission.Reviewer ? "yes" : "no")">@(permission.Reviewer ? "✓ 允許" : "—")</span></td>
+                        <td><span class="@(permission.Admin ? "yes" : "no")">@(permission.Admin ? "✓ 允許" : "—")</span></td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    private IReadOnlyList<ManagedUser>? _users;
+    private string _keyword = string.Empty;
+    private UserRole? _roleFilter;
+
+    private bool _formOpen;
+    private string? _editingUsername;
+    private UserDraft _draft = new();
+    private bool _busy;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+
+    private IEnumerable<ManagedUser> FilteredUsers => (_users ?? [])
+        .Where(u => _roleFilter is null || u.Role == _roleFilter)
+        .Where(u => string.IsNullOrWhiteSpace(_keyword)
+                    || u.Username.Contains(_keyword.Trim(), StringComparison.OrdinalIgnoreCase)
+                    || u.DisplayName.Contains(_keyword.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync() => _users = await UserService.GetUsersAsync();
+
+    private void OpenCreate()
+    {
+        _editingUsername = null;
+        _draft = new UserDraft();
+        _formOpen = true;
+    }
+
+    private void OpenEdit(ManagedUser user)
+    {
+        _editingUsername = user.Username;
+        _draft = new UserDraft { Username = user.Username, DisplayName = user.DisplayName, Role = user.Role };
+        _formOpen = true;
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        var result = _editingUsername is null
+            ? await UserService.AddUserAsync(_draft, UserName)
+            : await UserService.UpdateUserAsync(_editingUsername, _draft, UserName);
+        _busy = false;
+
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        if (result.Succeeded)
+        {
+            _formOpen = false;
+            await LoadAsync();
+        }
+    }
+
+    private async Task SetActiveAsync(ManagedUser user, bool isActive)
+    {
+        var result = await UserService.SetActiveAsync(user.Username, isActive, UserName);
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        await LoadAsync();
+    }
+
+    private async Task ResetMfaAsync(ManagedUser user)
+    {
+        var result = await UserService.ResetMfaAsync(user.Username, UserName);
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        await LoadAsync();
+    }
+}

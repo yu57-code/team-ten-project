@@ -1,0 +1,38 @@
+@* 系統管理／維護人員版面：深灰＋藍綠側欄。
+   Components/Pages/Admin 底下的頁面透過該資料夾的 _Imports.razor 自動套用。 *@
+@inherits LayoutComponentBase
+@inject IAuthService Auth
+@inject INavBadgeService Badges
+
+<MudThemeProvider Theme="AppThemes.Admin" />
+<MudPopoverProvider />
+<MudDialogProvider />
+<MudSnackbarProvider />
+
+<div class="ia-shell ia-shell--admin">
+    <AppSidebar Subtitle="系統管理／維護人員" Items="_items" User="CurrentUser" />
+    <main class="ia-main">
+        @Body
+    </main>
+</div>
+
+@code {
+    private IReadOnlyList<NavItem> _items = [];
+
+    private UserAccount CurrentUser =>
+        Auth.CurrentUser is { Role: UserRole.Admin } user ? user : Auth.GetDemoUser(UserRole.Admin);
+
+    protected override async Task OnInitializedAsync()
+    {
+        var counts = await Badges.GetAdminCountsAsync();
+
+        _items =
+        [
+            new("系統監控", "/admin", Icons.Material.Outlined.ShowChart, NavLinkMatch.All,
+                Badge: counts.FailedTasks, BadgeTone: NavBadgeTone.Red),
+            new("使用者與角色權限", "/admin/users", Icons.Material.Outlined.Group),
+            new("稽核軌跡", "/admin/audit", Icons.Material.Outlined.History),
+            new("系統設定與備份", "/admin/settings", Icons.Material.Outlined.Tune),
+        ];
+    }
+}

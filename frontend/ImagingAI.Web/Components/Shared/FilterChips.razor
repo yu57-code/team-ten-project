@@ -1,0 +1,35 @@
+@* 篩選標籤列（單選）。用法：
+   <FilterChips TValue="string" Options="_options" @bind-Value="_filter" /> *@
+@typeparam TValue
+
+<div class="ia-chips" role="group" aria-label="@AriaLabel">
+    @foreach (var option in Options)
+    {
+        var selected = EqualityComparer<TValue>.Default.Equals(option.Value, Value);
+        <button type="button"
+                class="@(selected ? "ia-chip is-on" : "ia-chip")"
+                aria-pressed="@(selected ? "true" : "false")"
+                @onclick="() => SelectAsync(option.Value)">
+            @ChipText(option)
+        </button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<ChipOption<TValue>> Options { get; set; } = [];
+
+    [Parameter] public TValue Value { get; set; } = default!;
+
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+
+    [Parameter] public string AriaLabel { get; set; } = "篩選";
+
+    private static string ChipText(ChipOption<TValue> option) =>
+        option.Count is { } count ? $"{option.Label}　{count}" : option.Label;
+
+    private async Task SelectAsync(TValue value)
+    {
+        Value = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+}

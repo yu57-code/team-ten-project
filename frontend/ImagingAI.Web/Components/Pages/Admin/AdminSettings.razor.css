@@ -1,0 +1,132 @@
+/* 系統設定與備份 */
+
+.layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+.block {
+    flex: 1 1 440px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+.block--table {
+    flex: none;
+    padding: 0;
+    gap: 0;
+    overflow: hidden;
+}
+
+.column {
+    flex: 1 1 440px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+}
+
+    .column .block {
+        flex: none;
+    }
+
+.slider-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.slider-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #0F766E;
+}
+
+.hint {
+    margin: 4px 0 0;
+    font-size: 12px;
+    color: #5A6577;
+}
+
+.row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.grow {
+    flex: 1 1 160px;
+}
+
+.test-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.table-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 20px 12px;
+}
+
+.type-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+    padding: 0 20px 16px;
+    align-items: end;
+}
+
+.type-form-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.backup {
+    overflow: hidden;
+}
+
+.backup-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 0 20px 16px;
+}
+
+    .backup-fields > div {
+        flex: 1 1 200px;
+    }
+
+.muted {
+    color: #5A6577;
+}
+
+.right {
+    text-align: right;
+}
+
+.empty {
+    padding: 24px 14px;
+    text-align: center;
+    color: #5A6577;
+}
+
+.block ::deep .mud-checkbox {
+    min-height: 40px;
+}
+
+.block ::deep .mud-slider {
+    margin-top: 6px;
+}

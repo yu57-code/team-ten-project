@@ -1,0 +1,84 @@
+/* 使用者與角色權限 */
+
+.muted {
+    color: #5A6577;
+}
+
+.small {
+    font-size: 13px;
+}
+
+.form {
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    border-color: #0F766E;
+}
+
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.form-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+}
+
+.buttons,
+.row-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.users,
+.permissions {
+    overflow: hidden;
+}
+
+.toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.search {
+    flex: 1 1 260px;
+    max-width: 360px;
+}
+
+.role-filter {
+    flex: 0 1 220px;
+}
+
+.section-head {
+    padding: 16px 20px 8px;
+}
+
+.right {
+    text-align: right;
+}
+
+.empty {
+    padding: 28px 14px;
+    text-align: center;
+    color: #5A6577;
+    white-space: normal;
+}
+
+.yes {
+    color: #0F766E;
+    font-weight: 700;
+}
+
+.no {
+    color: #5A6577;
+}
