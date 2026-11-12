@@ -1,7 +1,4 @@
-git rm -r --cached backend/ImagingAI.Api/bin
-git rm -r --cached backend/ImagingAI.Api/obj
-git rm -r --cached frontend/ImagingAI.Web/bin
-git rm -r --cached frontend/ImagingAI.Web/obj## ==========================================
+## ==========================================
 ## 1. .NET / C# (Backend & Blazor)
 ## ==========================================
 [Bb]in/
@@ -96,9 +93,6 @@ test_images/
 *.tiff
 *.pdf
 
-# 排除但保留測試目錄結構（可選：讓資料夾存在但內容被忽略）
-# !test_images/.gitkeep
-
 # PaddleOCR / 深度學習本地自動下載的權重快取
 .paddleocr/
 .paddlenlp/
@@ -108,3 +102,23 @@ models/
 *.pdparams
 *.pdopt
 *.pdmodel
+
+# ==========================================
+# 8. Presidio 與醫療資料保護
+# ==========================================
+
+# Presidio 專用虛擬環境
+.venv-deid/
+
+# OCR、Presidio 執行結果
+output/
+
+# 額外的本機測試資料
+test_data/
+
+# 醫療資料檔案
+*.dcm
+*.dicom
+
+# 本機除錯紀錄
+debug/
