@@ -1,0 +1,310 @@
+@page "/admin/settings"
+@inject ISettingsService SettingsService
+@inject IFhirConnectionTester FhirTester
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>系統設定與備份｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="系統設定與備份" Subtitle="驗證門檻、雲端傳送條件、報告類型、FHIR 連線與資料備份。變更會寫入稽核軌跡。">
+    <Actions>
+        <MudButton Variant="Variant.Outlined" Class="ia-btn" Disabled="_busy" OnClick="ReloadAsync">取消</MudButton>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn" Disabled="_busy" OnClick="SaveAsync">
+            儲存變更
+        </MudButton>
+    </Actions>
+</PageHeader>
+
+@if (_settings is null)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else
+{
+    <div class="layout">
+        @* ---------- 自動驗證門檻 ---------- *@
+        <section class="ia-card block">
+            <div>
+                <h2 class="ia-card-title">自動驗證門檻</h2>
+                <p class="ia-card-sub">低於門檻的病例自動送入異常佇列。</p>
+            </div>
+
+            <div>
+                <div class="slider-head">
+                    <span class="ia-label" id="ai-threshold-label">第二層：AI 欄位信心值門檻</span>
+                    <span class="slider-value">@_settings.AiConfidenceThreshold.ToString("0.00")</span>
+                </div>
+                <MudSlider T="double" @bind-Value="_settings.AiConfidenceThreshold" Min="0.5" Max="0.99" Step="0.01"
+                           Color="Color.Primary" aria-labelledby="ai-threshold-label" />
+                <p class="hint">提高門檻會讓更多欄位標示為需人工確認。</p>
+            </div>
+
+            <div>
+                <div class="slider-head">
+                    <span class="ia-label" id="ocr-threshold-label">第一層：OCR 文字品質門檻</span>
+                    <span class="slider-value">@_settings.OcrQualityThreshold.ToString("0.00")</span>
+                </div>
+                <MudSlider T="double" @bind-Value="_settings.OcrQualityThreshold" Min="0.3" Max="0.95" Step="0.01"
+                           Color="Color.Primary" aria-labelledby="ocr-threshold-label" />
+            </div>
+
+            <div>
+                <div class="ia-label">雲端傳送條件（第一層：解析前驗證，全部符合才送出）</div>
+                <MudCheckBox T="bool" Value="true" Disabled="true" Color="Color.Primary" Label="Presidio 個資遮蔽完成（必要，不可關閉）" />
+                <MudCheckBox T="bool" @bind-Value="_settings.RequireOcrQuality" Color="Color.Primary" Label="OCR 品質達門檻" />
+                <MudCheckBox T="bool" @bind-Value="_settings.RequireKnownReportType" Color="Color.Primary" Label="報告類型已辨識且為啟用類型" />
+                <MudCheckBox T="bool" @bind-Value="_settings.RequireCompletePages" Color="Color.Primary" Label="必要頁面完整（無缺頁）" />
+            </div>
+        </section>
+
+        <section class="column">
+            @* ---------- FHIR Server 連線 ---------- *@
+            <div class="ia-card block">
+                <div>
+                    <h2 class="ia-card-title">FHIR Server 連線</h2>
+                    <p class="ia-card-sub">HAPI FHIR JPA Server，依 TW Core IG 驗證。</p>
+                </div>
+                <div>
+                    <label class="ia-label" for="fhir-url">Base URL</label>
+                    <input id="fhir-url" class="ia-field ia-mono" placeholder="例如 http://localhost:8080/fhir"
+                           @bind="_settings.FhirBaseUrl" @bind:event="oninput" />
+                </div>
+                <div class="row">
+                    <div class="grow">
+                        <label class="ia-label" for="ig-version">TW Core IG 版本</label>
+                        <input id="ig-version" class="ia-field" placeholder="填入使用的 IG 版本" @bind="_settings.TwCoreIgVersion" />
+                    </div>
+                    <div class="grow">
+                        <label class="ia-label" for="fhir-version">FHIR 版本</label>
+                        <select id="fhir-version" class="ia-field" @bind="_settings.FhirVersion">
+                            <option value="R4">R4</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="test-row">
+                    <MudButton Variant="Variant.Outlined" Class="ia-btn" Disabled="_testing" OnClick="TestFhirAsync"
+                               StartIcon="@Icons.Material.Outlined.Sync">
+                        @(_testing ? "測試中…" : "測試連線")
+                    </MudButton>
+                    @if (_testResult is null)
+                    {
+                        <StatusBadge Tone="BadgeTone.Mute" Text="尚未測試" />
+                    }
+                    else
+                    {
+                        <StatusBadge Tone="@(_testResult.Success ? BadgeTone.Ok : BadgeTone.Err)" Text="@_testResult.Message" />
+                    }
+                </div>
+            </div>
+
+            @* ---------- 報告類型 ---------- *@
+            <div class="ia-card block block--table">
+                <div class="table-head">
+                    <div>
+                        <h2 class="ia-card-title">報告類型管理</h2>
+                        <p class="ia-card-sub">ReportType：決定 AI Agent 載入的 Prompt</p>
+                    </div>
+                    <MudButton Variant="Variant.Outlined" Class="ia-btn" StartIcon="@Icons.Material.Filled.Add"
+                               OnClick="() => _addingType = !_addingType">
+                        新增類型
+                    </MudButton>
+                </div>
+
+                @if (_addingType)
+                {
+                    <div class="type-form">
+                        <div>
+                            <label class="ia-label" for="type-code">type_code</label>
+                            <input id="type-code" class="ia-field ia-mono" placeholder="大寫英數字" @bind="_newTypeCode" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="ia-label" for="type-zh">中文名稱</label>
+                            <input id="type-zh" class="ia-field" @bind="_newTypeZh" @bind:event="oninput" />
+                        </div>
+                        <div>
+                            <label class="ia-label" for="type-en">英文名稱</label>
+                            <input id="type-en" class="ia-field" @bind="_newTypeEn" @bind:event="oninput" />
+                        </div>
+                        <div class="type-form-actions">
+                            <MudButton Variant="Variant.Outlined" Class="ia-btn" OnClick="() => _addingType = false">取消</MudButton>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn" OnClick="AddTypeAsync">新增</MudButton>
+                        </div>
+                    </div>
+                }
+
+                <div class="ia-table-wrap">
+                    <table class="ia-table">
+                        <thead><tr><th>type_code</th><th>中文名稱</th><th>英文名稱</th><th>啟用</th></tr></thead>
+                        <tbody>
+                            @foreach (var type in _reportTypes)
+                            {
+                                <tr>
+                                    <td class="ia-mono">@type.TypeCode</td>
+                                    <td>@type.NameZh</td>
+                                    <td>@(string.IsNullOrEmpty(type.NameEn) ? "—" : type.NameEn)</td>
+                                    <td>
+                                        <MudSwitch T="bool" Value="type.IsActive" Color="Color.Primary"
+                                                   ValueChanged="@((bool v) => SetTypeActiveAsync(type, v))"
+                                                   aria-label="@($"{(type.IsActive ? "停用" : "啟用")} {type.TypeCode}")" />
+                                    </td>
+                                </tr>
+                            }
+                            @if (_reportTypes.Count == 0)
+                            {
+                                <tr><td colspan="4" class="empty">尚未設定報告類型</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    @* ---------- 資料備份 ---------- *@
+    <section class="ia-card backup">
+        <div class="table-head">
+            <div>
+                <h2 class="ia-card-title">資料備份</h2>
+                <p class="ia-card-sub">資料庫（病例、結構化結果、異常佇列、稽核軌跡）與原始檔案。排程設定按「儲存變更」後生效。</p>
+            </div>
+            <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                       Disabled="_busy" OnClick="BackupNowAsync">
+                立即備份
+            </MudButton>
+        </div>
+        <div class="backup-fields">
+            <div>
+                <label class="ia-label" for="backup-schedule">自動備份排程</label>
+                <select id="backup-schedule" class="ia-field" @bind="_settings.BackupSchedule">
+                    <option value="每日 02:00">每日 02:00</option>
+                    <option value="每 12 小時">每 12 小時</option>
+                    <option value="每週日 02:00">每週日 02:00</option>
+                </select>
+            </div>
+            <div>
+                <label class="ia-label" for="backup-retention">保留期限</label>
+                <select id="backup-retention" class="ia-field" @bind="_settings.BackupRetention">
+                    <option value="30 天">30 天</option>
+                    <option value="90 天">90 天</option>
+                    <option value="180 天">180 天</option>
+                </select>
+            </div>
+            <div>
+                <label class="ia-label" for="backup-location">儲存位置</label>
+                <input id="backup-location" class="ia-field" placeholder="院內備份主機路徑" @bind="_settings.BackupLocation" />
+            </div>
+        </div>
+        <div class="ia-table-wrap">
+            <table class="ia-table">
+                <thead><tr><th>備份 ID</th><th>時間</th><th>類型</th><th>大小</th><th>狀態</th><th>說明</th><th><span class="ia-sr-only">操作</span></th></tr></thead>
+                <tbody>
+                    @foreach (var backup in _backups)
+                    {
+                        <tr>
+                            <td class="ia-mono">@backup.Id</td>
+                            <td class="muted">@backup.CreatedAt.ToString("MM/dd HH:mm")</td>
+                            <td>@backup.Kind</td>
+                            <td>@backup.Size</td>
+                            <td><StatusBadge Tone="@(backup.Status == BackupStatus.Completed ? BadgeTone.Ok : BadgeTone.Err)"
+                                             Text="@(backup.Status == BackupStatus.Completed ? "完成" : "失敗")" /></td>
+                            <td class="is-wrap muted">@backup.Note</td>
+                            <td class="right">
+                                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" OnClick="() => RestoreAsync(backup)">還原</MudButton>
+                            </td>
+                        </tr>
+                    }
+                    @if (_backups.Count == 0)
+                    {
+                        <tr><td colspan="7" class="empty">尚無備份紀錄</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+}
+
+@code {
+    private SystemSettings? _settings;
+    private IReadOnlyList<ReportTypeConfig> _reportTypes = [];
+    private IReadOnlyList<BackupRecord> _backups = [];
+    private FhirConnectionResult? _testResult;
+    private bool _busy;
+    private bool _testing;
+
+    private bool _addingType;
+    private string _newTypeCode = string.Empty;
+    private string _newTypeZh = string.Empty;
+    private string _newTypeEn = string.Empty;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        _settings = await SettingsService.GetSettingsAsync();
+        _reportTypes = await SettingsService.GetReportTypesAsync();
+        _backups = await SettingsService.GetBackupsAsync();
+    }
+
+    private async Task ReloadAsync()
+    {
+        _settings = await SettingsService.GetSettingsAsync();
+        _testResult = null;
+        Snackbar.Add("已還原為上次儲存的設定", Severity.Info);
+    }
+
+    private async Task SaveAsync()
+    {
+        _busy = true;
+        var result = await SettingsService.SaveSettingsAsync(_settings!, UserName);
+        _busy = false;
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+    }
+
+    private async Task TestFhirAsync()
+    {
+        _testing = true;
+        _testResult = await FhirTester.TestAsync(_settings!.FhirBaseUrl);
+        _testing = false;
+    }
+
+    private async Task AddTypeAsync()
+    {
+        var result = await SettingsService.AddReportTypeAsync(new ReportTypeConfig
+        {
+            TypeCode = _newTypeCode,
+            NameZh = _newTypeZh,
+            NameEn = _newTypeEn,
+            IsActive = true,
+        }, UserName);
+
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        if (result.Succeeded)
+        {
+            _addingType = false;
+            _newTypeCode = _newTypeZh = _newTypeEn = string.Empty;
+            _reportTypes = await SettingsService.GetReportTypesAsync();
+        }
+    }
+
+    private async Task SetTypeActiveAsync(ReportTypeConfig type, bool isActive)
+    {
+        var result = await SettingsService.SetReportTypeActiveAsync(type.TypeCode, isActive, UserName);
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        _reportTypes = await SettingsService.GetReportTypesAsync();
+    }
+
+    private async Task BackupNowAsync()
+    {
+        _busy = true;
+        var result = await SettingsService.CreateBackupAsync(UserName);
+        _busy = false;
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        _backups = await SettingsService.GetBackupsAsync();
+    }
+
+    private async Task RestoreAsync(BackupRecord backup)
+    {
+        var result = await SettingsService.RestoreBackupAsync(backup.Id, UserName);
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Info);
+    }
+}

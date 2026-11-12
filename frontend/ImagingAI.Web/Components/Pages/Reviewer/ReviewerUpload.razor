@@ -1,0 +1,255 @@
+@page "/reviewer/upload"
+@implements IDisposable
+@inject IUploadService UploadService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>上傳病例｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="上傳病例" Subtitle="支援 PDF、JPG、PNG 心導管檢查報告。上傳後系統自動建立處理任務，可在右側即時查看處理進度。" />
+
+<div class="layout">
+    <section class="left">
+        @* ---------- 上傳表單 ---------- *@
+        <div class="ia-card form">
+            <div class="@(_dragOver ? "drop is-over" : "drop")"
+                 @ondragenter="() => _dragOver = true"
+                 @ondragleave="() => _dragOver = false"
+                 @ondrop="() => _dragOver = false">
+                <MudIcon Icon="@Icons.Material.Outlined.FileUpload" Class="drop-icon" />
+                <span class="drop-title">拖放 PDF／圖片到此處</span>
+                <span class="drop-sub">可一次上傳多份，每份建立一筆 CaseID（單檔上限 10 MB）</span>
+                <span class="drop-btn" aria-hidden="true">選擇檔案</span>
+                <InputFile OnChange="OnFilesSelected" multiple class="drop-input" aria-label="選擇要上傳的病例檔案"
+                           accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" />
+            </div>
+
+            @if (_selectedFiles.Count > 0)
+            {
+                <ul class="files" aria-label="已選擇的檔案">
+                    @foreach (var file in _selectedFiles)
+                    {
+                        <li>
+                            <MudIcon Icon="@(file.ContentType.StartsWith("image") ? Icons.Material.Outlined.Image : Icons.Material.Outlined.PictureAsPdf)" Class="file-icon" />
+                            <span class="file-name">@file.FileName</span>
+                            <span class="file-size">@FormatSize(file.SizeBytes)</span>
+                            <MudIconButton Icon="@Icons.Material.Outlined.Close" Size="Size.Small" aria-label="@($"移除 {file.FileName}")"
+                                           OnClick="@(() => RemoveFile(file))" />
+                        </li>
+                    }
+                </ul>
+            }
+
+            <div class="fields">
+                <div class="field">
+                    <label class="ia-label" for="mrn">病歷號（上傳者輸入）</label>
+                    <input id="mrn" class="ia-field ia-mono" type="text" placeholder="將與 AI 擷取值比對"
+                           @bind="_mrn" @bind:event="oninput" />
+                </div>
+                <div class="field">
+                    <label class="ia-label" for="report-type">報告類型</label>
+                    <select id="report-type" class="ia-field" @bind="_reportType">
+                        <option value="自動辨識">自動辨識</option>
+                        <option value="心導管檢查報告">心導管檢查報告</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="submit-row">
+                <span class="muted small">個資會先在院內完成遮蔽，才會傳送到雲端解析。</span>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                           Disabled="_submitting" OnClick="SubmitAsync">
+                    上傳並建立處理任務
+                </MudButton>
+            </div>
+        </div>
+
+        @* ---------- 本次上傳 ---------- *@
+        <div class="ia-card recent">
+            <h2 class="recent-title">本次上傳</h2>
+            @if (_jobs.Count == 0)
+            {
+                <p class="muted small">尚未上傳任何病例。</p>
+            }
+            @foreach (var job in _jobs)
+            {
+                <button type="button" class="@(job.CaseId == _tracked?.CaseId ? "job is-tracked" : "job")"
+                        @onclick="() => _tracked = job" aria-label="@($"查看 {job.CaseId} 的處理進度")">
+                    <span class="ia-mono job-id">@job.CaseId</span>
+                    <span class="job-name">@JobDescription(job)</span>
+                    @switch (job.State)
+                    {
+                        case UploadJobState.Running:
+                            <StatusBadge Tone="BadgeTone.Info" Text="處理中" />
+                            break;
+                        case UploadJobState.PendingReview:
+                            <StatusBadge Tone="BadgeTone.Man" Text="已進入待覆核" />
+                            break;
+                        case UploadJobState.Duplicate:
+                            <StatusBadge Tone="BadgeTone.Mute" Text="重複病例" />
+                            break;
+                        default:
+                            <StatusBadge Tone="BadgeTone.Err" Text="失敗" />
+                            break;
+                    }
+                </button>
+            }
+        </div>
+    </section>
+
+    @* ---------- 處理進度 ---------- *@
+    <section class="ia-card progress">
+        @if (_tracked is null)
+        {
+            <h2 class="ia-card-title">處理進度</h2>
+            <p class="muted small">上傳檔案後，這裡會即時顯示處理進度。</p>
+        }
+        else
+        {
+            <div class="progress-head">
+                <h2 class="ia-card-title">處理進度</h2>
+                <span class="ia-mono id">@_tracked.CaseId</span>
+            </div>
+
+            <ProcessSteps Items="StepViewBuilder.ForUpload(_tracked)" />
+
+            @if (_tracked.State == UploadJobState.PendingReview)
+            {
+                <div class="done-banner">
+                    <span>全部完成，已進入「待覆核」</span>
+                    <MudButton Href="@($"/reviewer/review/{_tracked.CaseId}")" Variant="Variant.Filled" Color="Color.Primary"
+                               DropShadow="false" Class="ia-btn ia-btn--sm">
+                        前往覆核
+                    </MudButton>
+                </div>
+            }
+            else if (_tracked.State == UploadJobState.Duplicate)
+            {
+                <div class="dup-banner">
+                    SHA-256 已存在，已直接回傳 <span class="ia-mono">@_tracked.DuplicateOf</span> 的病例結果，不重複解析。
+                </div>
+            }
+        }
+        <p class="progress-note">完成後自動進入「待覆核」，任何階段失敗會轉入異常佇列。</p>
+    </section>
+</div>
+
+@code {
+    private const long MaxFileSize = 10 * 1024 * 1024;
+    private const int MaxFileCount = 10;
+    private static readonly string[] AllowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
+
+    private readonly List<UploadFile> _selectedFiles = [];
+    private List<UploadJob> _jobs = [];
+    private UploadJob? _tracked;
+
+    private string _mrn = string.Empty;
+    private string _reportType = "自動辨識";
+    private bool _dragOver;
+    private bool _submitting;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    protected override async Task OnInitializedAsync()
+    {
+        UploadService.JobChanged += OnJobChanged;
+        await LoadJobsAsync();
+        _tracked = _jobs.FirstOrDefault(j => j.State == UploadJobState.Running) ?? _jobs.FirstOrDefault();
+
+        foreach (var job in _jobs.Where(j => j.State == UploadJobState.Running))
+        {
+            await UploadService.ResumeAsync(job.CaseId);
+        }
+    }
+
+    private async Task LoadJobsAsync() => _jobs = (await UploadService.GetRecentJobsAsync(UserName)).ToList();
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        _dragOver = false;
+
+        // GetMultipleFiles 超過上限會丟例外，所以先放寬，再由下面自己檢查數量
+        foreach (var file in e.GetMultipleFiles(maximumFileCount: 100))
+        {
+            var extension = Path.GetExtension(file.Name).ToLowerInvariant();
+            if (!AllowedExtensions.Contains(extension))
+            {
+                Snackbar.Add($"{file.Name}：只接受 PDF、JPG、PNG 檔案", Severity.Error);
+                continue;
+            }
+
+            if (file.Size == 0 || file.Size > MaxFileSize)
+            {
+                Snackbar.Add($"{file.Name}：檔案必須大於 0 且不超過 10 MB", Severity.Error);
+                continue;
+            }
+
+            if (_selectedFiles.Any(f => f.FileName == file.Name))
+            {
+                continue;
+            }
+
+            if (_selectedFiles.Count >= MaxFileCount)
+            {
+                Snackbar.Add($"一次最多上傳 {MaxFileCount} 個檔案", Severity.Warning);
+                break;
+            }
+
+            var contentType = string.IsNullOrEmpty(file.ContentType)
+                ? (extension == ".pdf" ? "application/pdf" : "image/" + extension.TrimStart('.'))
+                : file.ContentType;
+            _selectedFiles.Add(new UploadFile(file.Name, file.Size, contentType));
+        }
+    }
+
+    private void RemoveFile(UploadFile file) => _selectedFiles.Remove(file);
+
+    private async Task SubmitAsync()
+    {
+        if (_selectedFiles.Count == 0)
+        {
+            Snackbar.Add("請選擇要上傳的 PDF 或圖片檔案", Severity.Warning);
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(_mrn))
+        {
+            Snackbar.Add("請輸入病歷號", Severity.Warning);
+            return;
+        }
+
+        _submitting = true;
+        var created = await UploadService.StartAsync(new UploadRequest(_selectedFiles.ToList(), _mrn.Trim(), _reportType, UserName));
+        _submitting = false;
+
+        await LoadJobsAsync();
+        _tracked = _jobs.FirstOrDefault(j => j.CaseId == created.FirstOrDefault(c => c.State == UploadJobState.Running)?.CaseId)
+                   ?? _jobs.FirstOrDefault(j => j.CaseId == created.FirstOrDefault()?.CaseId);
+
+        var duplicates = created.Count(j => j.State == UploadJobState.Duplicate);
+        Snackbar.Add(duplicates > 0
+            ? $"已建立 {created.Count} 筆處理任務，其中 {duplicates} 筆為重複病例（已回傳既有結果）"
+            : $"已建立 {created.Count} 筆處理任務", Severity.Success);
+
+        _selectedFiles.Clear();
+        _mrn = string.Empty;
+    }
+
+    private void OnJobChanged(UploadJob job)
+    {
+        if (_jobs.Any(j => j.CaseId == job.CaseId))
+        {
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private static string JobDescription(UploadJob job) => job.State == UploadJobState.Duplicate
+        ? $"{job.FileName}・SHA-256 已存在，已回傳既有結果"
+        : string.IsNullOrEmpty(job.Description) ? job.FileName : $"{job.FileName}・{job.Description}";
+
+    private static string FormatSize(long bytes) => bytes >= 1024 * 1024
+        ? $"{bytes / 1024d / 1024d:0.0} MB"
+        : $"{Math.Max(1, bytes / 1024)} KB";
+
+    public void Dispose() => UploadService.JobChanged -= OnJobChanged;
+}

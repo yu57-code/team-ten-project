@@ -1,0 +1,121 @@
+@page "/reviewer/history"
+@inject IAuditService AuditService
+@inject ICaseService CaseService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+@inject ImagingAI.Web.Services.BrowserDownloadService Downloader
+
+<PageTitle>個人處理紀錄｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="個人處理紀錄"
+            Subtitle="您上傳、覆核、修正與處理異常的紀錄（取自稽核軌跡，唯讀）。已寫入 FHIR 的病例可在此匯出 FHIR JSON。">
+    <Actions>
+        <div class="range">
+            <label for="history-range" class="ia-sr-only">時間範圍</label>
+            <select id="history-range" class="ia-field" value="@_range" @onchange="OnRangeChangedAsync">
+                <option value="@HistoryRange.ThisWeek">本週</option>
+                <option value="@HistoryRange.ThisMonth">本月</option>
+                <option value="@HistoryRange.Last90Days">近 90 天</option>
+            </select>
+        </div>
+    </Actions>
+</PageHeader>
+
+@if (_stats is not null)
+{
+    <section class="ia-stats">
+        <StatCard Label="上傳病例" Value="@_stats.Uploads.ToString()" />
+        <StatCard Label="覆核完成" Value="@_stats.Reviews.ToString()" ValueColor="#5B2BB5" />
+        <StatCard Label="異常處理" Value="@_stats.Exceptions.ToString()" ValueColor="#B91C1C" />
+        <StatCard Label="欄位修正" Value="@_stats.Edits.ToString()" ValueColor="#1E40AF" />
+    </section>
+}
+
+<section class="ia-card records">
+    <div class="records-head">
+        <h2 class="ia-card-title">處理紀錄</h2>
+        <FilterChips TValue="HistoryAction?" Options="ActionOptions" @bind-Value="_action" AriaLabel="依動作篩選" />
+    </div>
+    <div class="ia-table-wrap">
+        <table class="ia-table">
+            <thead>
+                <tr><th>時間</th><th>動作</th><th>病例</th><th>內容</th><th>病例目前狀態</th><th><span class="ia-sr-only">操作</span></th></tr>
+            </thead>
+            <tbody>
+                @foreach (var record in FilteredRecords)
+                {
+                    var action = StatusStyles.Display(record.Action);
+                    var state = StatusStyles.Display(record.CaseState);
+                    <tr>
+                        <td class="muted">@record.Time.ToString("MM/dd HH:mm")</td>
+                        <td><StatusBadge Tone="action.Tone" Text="@action.Label" /></td>
+                        <td class="ia-mono">@record.CaseId</td>
+                        <td class="is-wrap content">@record.Description</td>
+                        <td><StatusBadge Tone="state.Tone" Text="@state.Label" /></td>
+                        <td class="right">
+                            @if (record.CaseState == HistoryCaseState.WrittenToFhir)
+                            {
+                                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" StartIcon="@Icons.Material.Outlined.Download"
+                                           OnClick="() => ExportAsync(record.CaseId)">
+                                    匯出 FHIR JSON
+                                </MudButton>
+                            }
+                        </td>
+                    </tr>
+                }
+                @if (_records is not null && !FilteredRecords.Any())
+                {
+                    <tr><td colspan="6" class="empty">沒有符合條件的紀錄</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    private static readonly IReadOnlyList<ChipOption<HistoryAction?>> ActionOptions =
+    [
+        new(null, "全部"),
+        new(HistoryAction.Upload, "上傳病例"),
+        new(HistoryAction.Review, "覆核送出"),
+        new(HistoryAction.Edit, "修正欄位"),
+        new(HistoryAction.Exception, "處理異常"),
+    ];
+
+    private IReadOnlyList<HistoryRecord>? _records;
+    private HistoryStats? _stats;
+    private HistoryRange _range = HistoryRange.ThisWeek;
+    private HistoryAction? _action;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    // 「處理異常」同時包含「標記無法處理」
+    private IEnumerable<HistoryRecord> FilteredRecords => (_records ?? []).Where(r => _action switch
+    {
+        null => true,
+        HistoryAction.Exception => r.Action is HistoryAction.Exception or HistoryAction.Unresolvable,
+        _ => r.Action == _action,
+    });
+
+    protected override async Task OnInitializedAsync()
+    {
+        _records = await AuditService.GetHistoryAsync(UserName);
+        _stats = await AuditService.GetHistoryStatsAsync(UserName, _range);
+    }
+
+    private async Task OnRangeChangedAsync(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<HistoryRange>(e.Value?.ToString(), out var range))
+        {
+            _range = range;
+            _stats = await AuditService.GetHistoryStatsAsync(UserName, _range);
+        }
+    }
+
+    private async Task ExportAsync(string caseId)
+    {
+        var json = await CaseService.ExportFhirBundleAsync(caseId);
+        await Downloader.DownloadTextAsync($"{caseId}-fhir-bundle.json", json);
+        Snackbar.Add($"已匯出 {caseId} 的 FHIR JSON", Severity.Success);
+    }
+}

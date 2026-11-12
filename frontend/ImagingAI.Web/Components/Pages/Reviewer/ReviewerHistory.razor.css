@@ -1,0 +1,36 @@
+/* 個人處理紀錄 */
+
+.range {
+    width: 180px;
+}
+
+.records {
+    overflow: hidden;
+}
+
+.records-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.muted {
+    color: #5A6577;
+}
+
+.content {
+    min-width: 260px;
+}
+
+.right {
+    text-align: right;
+}
+
+.empty {
+    padding: 28px 14px;
+    text-align: center;
+    color: #5A6577;
+}

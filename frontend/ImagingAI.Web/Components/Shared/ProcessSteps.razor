@@ -1,0 +1,62 @@
+@* 垂直處理進度（綠色勾勾＝完成、空心圈＋進度條＝進行中、紫圈＝等待人工、紅色驚嘆號＝失敗、灰色數字＝未開始） *@
+
+<ol class="steps" aria-label="處理進度">
+    @for (var i = 0; i < Items.Count; i++)
+    {
+        var step = Items[i];
+        var isLast = i == Items.Count - 1;
+        <li class="step">
+            <div class="rail" aria-hidden="true">
+                <span class="@($"dot dot--{StateKey(step.State)}")">
+                    @if (step.State == StageState.Done)
+                    {
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10" /></svg>
+                    }
+                    else if (step.State == StageState.Failed)
+                    {
+                        <span>!</span>
+                    }
+                    else if (step.State == StageState.Todo)
+                    {
+                        <span>@step.Number</span>
+                    }
+                </span>
+                @if (!isLast)
+                {
+                    <span class="@(step.State == StageState.Done ? "line line--done" : "line")"></span>
+                }
+            </div>
+            <div class="body">
+                <div class="@($"title title--{StateKey(step.State)}")">@step.Number　@step.Title</div>
+                <div class="@(step.State == StageState.Failed ? "desc desc--fail" : "desc")">@step.Description</div>
+                @if (step.State == StageState.Running)
+                {
+                    <MudProgressLinear Value="@Math.Max(step.Progress, 8)" Rounded="true" Class="bar" aria-label="@($"{step.Title} 進度")" />
+                }
+            </div>
+            <span class="ia-sr-only">@StateText(step.State)</span>
+        </li>
+    }
+</ol>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<StepView> Items { get; set; } = [];
+
+    private static string StateKey(StageState state) => state switch
+    {
+        StageState.Done => "done",
+        StageState.Running => "run",
+        StageState.Waiting => "wait",
+        StageState.Failed => "fail",
+        _ => "todo",
+    };
+
+    private static string StateText(StageState state) => state switch
+    {
+        StageState.Done => "已完成",
+        StageState.Running => "進行中",
+        StageState.Waiting => "等待人工處理",
+        StageState.Failed => "失敗",
+        _ => "尚未開始",
+    };
+}

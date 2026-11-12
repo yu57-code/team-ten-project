@@ -1,0 +1,110 @@
+/* 稽核軌跡（系統管理員） */
+
+.filters {
+    padding: 16px 20px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+    .filters .ia-label {
+        margin-bottom: 4px;
+        font-size: 12px;
+    }
+
+.layout {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+.entries {
+    flex: 3 1 560px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.muted {
+    color: #5A6577;
+}
+
+.small {
+    margin: 0;
+    font-size: 13px;
+}
+
+.pick {
+    min-height: 32px;
+    padding: 0;
+    border: 0;
+    background: none;
+    color: #0F5F59;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+    .pick:hover {
+        text-decoration: underline;
+    }
+
+.empty {
+    padding: 28px 14px;
+    text-align: center;
+    color: #5A6577;
+}
+
+.detail {
+    flex: 2 1 380px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.detail-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+}
+
+.detail-title {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.note {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.code-label {
+    margin-bottom: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #3A4556;
+}
+
+.code {
+    margin: 0;
+    padding: 14px 16px;
+    border-radius: 8px;
+    background: #F7F9F9;
+    color: #2A3445;
+    font-family: var(--ia-mono);
+    font-size: 13px;
+    line-height: 1.7;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.code--after {
+    background: #EEF8F6;
+}

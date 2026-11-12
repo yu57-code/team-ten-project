@@ -1,0 +1,14 @@
+@* 第一階段的暫時內容：確認版面、側邊選單與頁面切換用。
+   第二、三階段會以完整頁面覆蓋各頁檔案，這個元件之後可以刪除。 *@
+
+<MudPaper Outlined="true" Elevation="0" Class="ia-card ia-coming">
+    <MudIcon Icon="@Icons.Material.Outlined.Info" Class="ia-coming-icon" />
+    <div>
+        <div class="ia-coming-title">此頁將於@(Stage)完成</div>
+        <p class="ia-coming-text">目前用來確認共用版面、側邊選單、主題配色與頁面切換是否正常。</p>
+    </div>
+</MudPaper>
+
+@code {
+    [Parameter] public string Stage { get; set; } = "第二階段";
+}

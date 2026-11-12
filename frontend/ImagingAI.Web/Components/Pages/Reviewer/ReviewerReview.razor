@@ -1,0 +1,475 @@
+@page "/reviewer/review"
+@page "/reviewer/review/{CaseId}"
+@using System.Text.RegularExpressions
+@inject ICaseService CaseService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+@inject NavigationManager Nav
+@inject ImagingAI.Web.Services.BrowserDownloadService Downloader
+
+<PageTitle>待覆核｜影像病例結構化平台</PageTitle>
+
+@if (_loading)
+{
+    <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
+}
+else if (_detail is null)
+{
+    <PageHeader Title="待覆核" Subtitle="確認重要結果、修正解析結果後，送出審核並轉換 FHIR。">
+        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
+    </PageHeader>
+    <div class="ia-card empty-card">
+        <MudIcon Icon="@Icons.Material.Outlined.TaskAlt" Class="empty-icon" />
+        <div>
+            <div class="empty-title">@(CaseId is null ? "目前沒有待覆核的病例" : $"找不到病例 {CaseId}")</div>
+            <p class="muted">可以回到總覽查看所有病例的處理進度。</p>
+        </div>
+        <MudButton Href="/reviewer" Variant="Variant.Outlined" Class="ia-btn">回到總覽</MudButton>
+    </div>
+}
+else
+{
+    <PageHeader Title="@($"{_detail.CaseId}・{_detail.ReportType}")">
+        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
+        <TitleAddon>
+            <StatusBadge Tone="StatusStyles.Tone(_detail.Status)" Text="@StatusText" />
+        </TitleAddon>
+        <SubtitleContent>
+            <p class="ia-page-sub meta">
+                病歷號 <span class="ia-mono">@_detail.MaskedMrn</span>・上傳 @_detail.UploadedAt.ToString("MM/dd HH:mm")・Batch <span class="ia-mono">@_detail.BatchId</span>・資料版本 @($"v{_detail.Version}")
+            </p>
+        </SubtitleContent>
+        <Actions>
+            @if (!ReadOnly)
+            {
+                <MudButton Variant="Variant.Outlined" Class="ia-btn" OnClick="() => _showReturn = !_showReturn">退回異常佇列</MudButton>
+            }
+            <MudButton Variant="Variant.Outlined" Class="ia-btn" Disabled="@(_detail.Status != CaseStatus.Completed)"
+                       OnClick="ExportAsync" StartIcon="@Icons.Material.Outlined.Download">
+                匯出 FHIR JSON
+            </MudButton>
+        </Actions>
+    </PageHeader>
+
+    @if (_showReturn)
+    {
+        <section class="ia-card return-card">
+            <label class="ia-label" for="return-reason">退回原因（會寫入異常佇列與稽核軌跡）</label>
+            <textarea id="return-reason" class="ia-field" rows="2" placeholder="例如：Findings 與原始文件不符，需重新解析"
+                      @bind="_returnReason" @bind:event="oninput"></textarea>
+            <div class="row-end">
+                <MudButton Variant="Variant.Outlined" Class="ia-btn" OnClick="() => _showReturn = false">取消</MudButton>
+                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--danger" Disabled="_busy" OnClick="ReturnAsync">確認退回</MudButton>
+            </div>
+        </section>
+    }
+
+    @if (ReadOnly)
+    {
+        <div class="readonly-note">
+            <MudIcon Icon="@Icons.Material.Outlined.Lock" Class="note-icon" />
+            這筆病例目前狀態為「@StatusText」，以唯讀模式顯示。
+        </div>
+    }
+
+    <div class="layout">
+        @* ---------- 左：原始文件 ---------- *@
+        <section class="ia-card doc">
+            <div class="doc-head">
+                <h2 class="card-title">原始文件（已去識別化）</h2>
+                <div class="tabs" role="tablist" aria-label="頁面">
+                    @foreach (var page in _detail.Pages)
+                    {
+                        <button type="button" role="tab" aria-selected="@(page.Number == _page ? "true" : "false")"
+                                class="@(page.Number == _page ? "tab is-on" : "tab")" @onclick="() => _page = page.Number">
+                            第 @(page.Number) 頁
+                        </button>
+                    }
+                </div>
+            </div>
+            <div class="doc-badges">
+                <StatusBadge Tone="BadgeTone.Ok" Text="@($"OCR 品質 {Fmt(_detail.OcrQuality)}")" />
+                <StatusBadge Tone="BadgeTone.Info" Text="@($"Presidio 已遮蔽 {_detail.MaskedCount?.ToString() ?? "—"} 處")" />
+                <StatusBadge Tone="BadgeTone.Mute" Text="@($"報告類型信心值 {Fmt(_detail.ReportTypeConfidence)}")" />
+            </div>
+            <div class="sheet-wrap">
+                <div class="sheet">
+                    @if (CurrentPage is null)
+                    {
+                        <p class="sheet-empty">尚無原始文件內容。串接後會顯示地端 OCR 與 Presidio 去識別化後的文字。</p>
+                    }
+                    @foreach (var line in CurrentPage?.Lines ?? [])
+                    {
+                        if (line.IsPlaceholder)
+                        {
+                            <span class="ln"></span>
+                        }
+                        else
+                        {
+                            <div class="@LineClass(line)">
+                                @foreach (var token in Tokenize(line.Text))
+                                {
+                                    if (token.IsMask)
+                                    {
+                                        <span class="mask">@token.Text</span>
+                                    }
+                                    else
+                                    {
+                                        @token.Text
+                                    }
+                                }
+                            </div>
+                        }
+                    }
+                </div>
+                <p class="sheet-note">@SheetNote</p>
+            </div>
+        </section>
+
+        @* ---------- 右：欄位、重要結果、檢查數值 ---------- *@
+        <section class="right">
+            <div class="ia-card block">
+                <div class="block-head">
+                    <h2 class="card-title">必要欄位</h2>
+                    <span class="muted small">信心值門檻 @_detail.ConfidenceThreshold.ToString("0.00")・低於門檻以橘框標示</span>
+                </div>
+                <div class="field-grid">
+                    @foreach (var field in _detail.RequiredFields.Where(f => !f.Wide))
+                    {
+                        <div class="field">
+                            <label class="ia-label" for="@($"f-{field.Key}")">@field.Label</label>
+                            @if (field.Kind == FieldKind.Select)
+                            {
+                                <select id="@($"f-{field.Key}")" class="@FieldClass(field)" @bind="field.Value" disabled="@ReadOnly">
+                                    <option value="">請選擇</option>
+                                    @foreach (var option in field.Options)
+                                    {
+                                        <option value="@option">@option</option>
+                                    }
+                                </select>
+                            }
+                            else
+                            {
+                                <input id="@($"f-{field.Key}")" class="@FieldClass(field)" @bind="field.Value" disabled="@ReadOnly" />
+                            }
+                            <span class="@HintClass(field)">@HintText(field)</span>
+                        </div>
+                    }
+                </div>
+                @foreach (var field in _detail.RequiredFields.Where(f => f.Wide))
+                {
+                    <div class="field">
+                        <label class="ia-label" for="@($"f-{field.Key}")">@field.Label</label>
+                        <textarea id="@($"f-{field.Key}")" class="@FieldClass(field)" rows="@field.Rows" @bind="field.Value" disabled="@ReadOnly"></textarea>
+                        @if (IsLow(field))
+                        {
+                            <span class="@HintClass(field)">@HintText(field)</span>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="ia-card block">
+                <div class="block-head">
+                    <h2 class="card-title">確認重要結果（勾選）</h2>
+                    <span class="confirm-count">已確認 @ConfirmedCount / @_detail.ImportantResults.Count</span>
+                </div>
+                <p class="muted small">逐項確認是否符合醫療人員認定的結果；有誤請點「修正」。點文字可在原文標示來源。</p>
+                @if (_detail.ImportantResults.Count == 0)
+                {
+                    <p class="empty-box">尚無 AI 擷取的重要結果。</p>
+                }
+                @foreach (var item in _detail.ImportantResults)
+                {
+                    <div class="@(item.Confirmed ? "result is-on" : "result")">
+                        <MudCheckBox T="bool" Value="item.Confirmed" ValueChanged="@((bool v) => SetConfirmed(item, v))"
+                                     Color="Color.Primary" Disabled="ReadOnly" Class="result-check"
+                                     aria-label="@($"確認 {item.Title}")" />
+                        @if (_editingKey == item.Key)
+                        {
+                            <div class="result-text">
+                                <label class="ia-sr-only" for="@($"edit-{item.Key}")">修正 @item.Title</label>
+                                <input id="@($"edit-{item.Key}")" class="ia-field" @bind="item.Title" @bind:event="oninput" />
+                            </div>
+                            <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn ia-btn--sm"
+                                       OnClick="() => FinishEdit(item)">完成</MudButton>
+                        }
+                        else
+                        {
+                            <button type="button" class="result-text as-link" @onclick="() => Highlight(item)">
+                                <span class="result-title">@item.Title</span>
+                                <span class="result-src">@item.Source</span>
+                            </button>
+                            var sig = StatusStyles.Display(item.Significance);
+                            <StatusBadge Tone="sig.Tone" Text="@sig.Label" />
+                            <StatusBadge Tone="@(item.Confidence < _detail.ConfidenceThreshold ? BadgeTone.Warn : BadgeTone.Mute)"
+                                         Text="@($"信心 {item.Confidence:0.00}")" />
+                            <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" Disabled="ReadOnly"
+                                       OnClick="() => _editingKey = item.Key">修正</MudButton>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="ia-card block block--table">
+                <h2 class="card-title pad">檢查數值（Observation）</h2>
+                <div class="ia-table-wrap">
+                    <table class="ia-table">
+                        <thead>
+                            <tr><th>項目</th><th>數值</th><th>單位</th><th>參考範圍</th><th>旗標</th><th>標準編碼</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var row in _detail.Observations)
+                            {
+                                var flag = StatusStyles.Display(row.Flag);
+                                <tr>
+                                    <td>@row.Item</td>
+                                    <td>@row.Value</td>
+                                    <td>@row.Unit</td>
+                                    <td>@row.ReferenceRange</td>
+                                    <td><StatusBadge Tone="flag.Tone" Text="@flag.Label" /></td>
+                                    <td>
+                                        @if (row.CodeMapped)
+                                        {
+                                            <StatusBadge Tone="BadgeTone.Ok" Text="已對應" />
+                                        }
+                                        else
+                                        {
+                                            <button type="button" class="map-btn" disabled="@ReadOnly" @onclick="() => MapCode(row)"
+                                                    title="點此對應標準編碼">
+                                                未對應・點此對應
+                                            </button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                            @if (_detail.Observations.Count == 0)
+                            {
+                                <tr><td colspan="6" class="empty-row">尚無檢查數值</td></tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    @* ---------- FHIR 轉換與 TW Core 驗證 ---------- *@
+    <section class="ia-card fhir">
+        <div class="block-head">
+            <h2 class="card-title">FHIR 轉換與 TW Core 驗證</h2>
+            <span class="muted small">@FhirStatusText</span>
+        </div>
+        @if (HasFhirResult)
+        {
+            <div class="badges">
+                @foreach (var check in _detail.FhirChecks)
+                {
+                    <StatusBadge Tone="@(check.Passed ? BadgeTone.Ok : BadgeTone.Err)" Text="@check.Label" />
+                }
+                @if (_detail.Observations.Count > 0)
+                {
+                    <StatusBadge Tone="@(UnmappedCount > 0 ? BadgeTone.Err : BadgeTone.Ok)"
+                                 Text="@(UnmappedCount > 0 ? $"Observation {UnmappedCount} 項錯誤" : "Observation 通過")" />
+                }
+            </div>
+        }
+        @if (FirstUnmapped is { } missing)
+        {
+            <div class="fhir-error" role="alert">
+                <MudIcon Icon="@Icons.Material.Outlined.ErrorOutline" Class="fhir-error-icon" />
+                <span><b>Observation（@missing.Item）.code</b> 缺少標準編碼，不符 TW Core Observation Profile。請於「檢查數值」補上編碼後重新送出。</span>
+            </div>
+        }
+        <div>
+            <label class="ia-label" for="review-comment">審核意見</label>
+            <textarea id="review-comment" class="ia-field" rows="2" disabled="@ReadOnly"
+                      placeholder="記錄修正內容或需他人確認的事項（寫入 ReviewRecord 與稽核軌跡）"
+                      @bind="_detail.Comment" @bind:event="oninput"></textarea>
+        </div>
+        @if (!ReadOnly)
+        {
+            <div class="row-end">
+                <span class="muted small">@ConfirmHint</span>
+                <MudButton Variant="Variant.Outlined" Class="ia-btn" Disabled="_busy" OnClick="SaveDraftAsync">儲存草稿</MudButton>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                           Disabled="@(!AllConfirmed || _busy)" OnClick="SubmitAsync">
+                    送出審核並轉換 FHIR
+                </MudButton>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public string? CaseId { get; set; }
+
+    private static readonly Regex MaskPattern = new(@"\[(PERSON|ID|DATE|HOSPITAL)\]", RegexOptions.Compiled);
+
+    private CaseReviewDetail? _detail;
+    private bool _loading = true;
+    private bool _busy;
+    private int _page = 1;
+    private string? _highlightKey;
+    private string? _editingKey;
+    private bool _showReturn;
+    private string _returnReason = string.Empty;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    private bool ReadOnly => _detail?.Status != CaseStatus.PendingReview;
+
+    private string StatusText => _detail?.Status switch
+    {
+        CaseStatus.PendingReview => "待覆核",
+        CaseStatus.Completed => "已完成",
+        CaseStatus.Exception => "異常處理中",
+        CaseStatus.Processing => "處理中",
+        CaseStatus.Duplicate => "重複病例",
+        _ => "已結案",
+    };
+
+    private DocPage? CurrentPage => _detail!.Pages.FirstOrDefault(p => p.Number == _page) ?? _detail.Pages.FirstOrDefault();
+
+    private bool HasFhirResult => _detail is not null && (_detail.FhirChecks.Count > 0 || _detail.Observations.Count > 0);
+
+    private string ConfirmHint => _detail!.ImportantResults.Count == 0
+        ? "沒有需要勾選的重要結果"
+        : AllConfirmed ? "全部重要結果已確認" : $"尚有 {_detail.ImportantResults.Count - ConfirmedCount} 項重要結果未確認";
+
+    private static string Fmt(double? value) => value?.ToString("0.00") ?? "—";
+
+    private ImportantResult? HighlightedResult => _detail?.ImportantResults.FirstOrDefault(r => r.Key == _highlightKey);
+
+    private int ConfirmedCount => _detail?.ImportantResults.Count(r => r.Confirmed) ?? 0;
+
+    private bool AllConfirmed => _detail is not null && ConfirmedCount == _detail.ImportantResults.Count;
+
+    private int UnmappedCount => _detail?.Observations.Count(o => !o.CodeMapped) ?? 0;
+
+    private string SheetNote => HighlightedResult is null
+        ? "點選右側重要結果，會在原文標示來源位置。"
+        : $"點選右側重要結果，會在原文標示來源位置（目前：{HighlightedResult.Title}，第 {HighlightedResult.SourcePage} 頁）。";
+
+    private string FhirStatusText => !HasFhirResult
+        ? "尚未進行 FHIR 驗證，送出審核後會依 TW Core 轉換並驗證"
+        : (_detail?.LastFhirSubmitAt is { } at ? $"上次送出 {at:MM/dd HH:mm}・" : string.Empty)
+          + (UnmappedCount > 0 ? $"驗證失敗 {UnmappedCount} 項" : "驗證可通過");
+
+    private ObservationRow? FirstUnmapped => _detail?.Observations.FirstOrDefault(o => !o.CodeMapped);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _loading = true;
+        _detail = await CaseService.GetReviewAsync(CaseId);
+        _page = 1;
+        _editingKey = null;
+        _showReturn = false;
+        _highlightKey = _detail?.ImportantResults.FirstOrDefault()?.Key;
+        _loading = false;
+    }
+
+    private string LineClass(DocLine line)
+    {
+        var css = "line";
+        if (line.IsHeading) css += " heading";
+        if (line.IsCenter) css += " center";
+        if (line.Key is not null && HighlightedResult?.SourceLineKey == line.Key && HighlightedResult.SourcePage == _page) css += " hl";
+        return css;
+    }
+
+    private static IEnumerable<(string Text, bool IsMask)> Tokenize(string text)
+    {
+        // Regex.Split 搭配擷取群組：偶數索引是一般文字、奇數索引是遮蔽類型
+        var parts = MaskPattern.Split(text);
+        for (var i = 0; i < parts.Length; i++)
+        {
+            if (parts[i].Length > 0)
+            {
+                yield return (parts[i], i % 2 == 1);
+            }
+        }
+    }
+
+    private bool IsLow(ExtractedField field) => field.Confidence < _detail!.ConfidenceThreshold;
+
+    private string FieldClass(ExtractedField field)
+    {
+        var css = "ia-field";
+        if (field.Kind == FieldKind.Mono) css += " ia-mono";
+        if (IsLow(field)) css += " ia-field--low";
+        return css;
+    }
+
+    private string HintClass(ExtractedField field) =>
+        IsLow(field) ? "hint hint--low" : field.HintPositive ? "hint hint--ok" : "hint";
+
+    private string HintText(ExtractedField field) =>
+        IsLow(field) ? $"信心值 {Fmt(field.Confidence)}，低於門檻，請逐句核對" : field.Hint;
+
+    private void Highlight(ImportantResult item)
+    {
+        _highlightKey = item.Key;
+        _page = item.SourcePage;
+    }
+
+    private void SetConfirmed(ImportantResult item, bool value)
+    {
+        item.Confirmed = value;
+        Highlight(item);
+    }
+
+    private void FinishEdit(ImportantResult item)
+    {
+        _editingKey = null;
+        Snackbar.Add($"已修正：{item.Title}（儲存草稿或送出後寫入）", Severity.Info);
+    }
+
+    private void MapCode(ObservationRow row)
+    {
+        row.CodeMapped = true;
+        Snackbar.Add($"{row.Item} 已對應標準編碼", Severity.Success);
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        _busy = true;
+        var result = await CaseService.SaveReviewDraftAsync(_detail!, UserName);
+        _busy = false;
+
+        if (result.Succeeded)
+        {
+            _detail!.Version++;
+        }
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Error);
+    }
+
+    private async Task SubmitAsync()
+    {
+        _busy = true;
+        var result = await CaseService.SubmitReviewAsync(_detail!, UserName);
+        _busy = false;
+
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        Nav.NavigateTo(result.Succeeded ? "/reviewer" : $"/reviewer/exceptions?case={_detail!.CaseId}");
+    }
+
+    private async Task ReturnAsync()
+    {
+        _busy = true;
+        var result = await CaseService.ReturnToExceptionQueueAsync(_detail!.CaseId, _returnReason, UserName);
+        _busy = false;
+
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        if (result.Succeeded)
+        {
+            Nav.NavigateTo($"/reviewer/exceptions?case={_detail.CaseId}");
+        }
+    }
+
+    private async Task ExportAsync()
+    {
+        var json = await CaseService.ExportFhirBundleAsync(_detail!.CaseId);
+        await Downloader.DownloadTextAsync($"{_detail.CaseId}-fhir-bundle.json", json);
+    }
+}
