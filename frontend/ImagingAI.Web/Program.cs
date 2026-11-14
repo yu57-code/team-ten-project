@@ -43,6 +43,43 @@ builder.Services.AddHttpClient<IFhirConnectionTester, HttpFhirConnectionTester>(
 
 // 瀏覽器下載（JS Interop）
 builder.Services.AddScoped<BrowserDownloadService>();
+// YARP Reverse Proxy
+builder.Services.AddReverseProxy()
+    .LoadFromConfig(
+        builder.Configuration.GetSection("ReverseProxy"));
+
+
+ // ==========================================
+ // 檢查 YARP 設定是否正確載入
+ // ==========================================
+
+ Console.WriteLine("===== YARP 設定檢查 =====");
+
+ Console.WriteLine(
+     "目前環境：" + builder.Environment.EnvironmentName);
+
+ var proxyRoutes = builder.Configuration
+     .GetSection("ReverseProxy:Routes")
+     .GetChildren()
+     .Select(x => x.Key)
+     .ToArray();
+
+ Console.WriteLine(
+     "YARP Routes：" + string.Join(", ", proxyRoutes));
+
+ Console.WriteLine(
+     "API Route：" +
+     builder.Configuration["ReverseProxy:Routes:api-route:Match:Path"]);
+
+ Console.WriteLine(
+     "Swagger Route：" +
+     builder.Configuration["ReverseProxy:Routes:swagger-route:Match:Path"]);
+
+ Console.WriteLine(
+     "Backend Address：" +
+     builder.Configuration["ReverseProxy:Clusters:backend:Destinations:destination1:Address"]);
+
+ Console.WriteLine("=========================");
 
 var app = builder.Build();
 
@@ -58,7 +95,9 @@ app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 
+// 將 API 與 Swagger 請求轉送至後端
+app.MapReverseProxy();
 app.MapRazorComponents<App>()
-    .AddInteractiveServerRenderMode();
+     .AddInteractiveServerRenderMode();
 
 app.Run();
