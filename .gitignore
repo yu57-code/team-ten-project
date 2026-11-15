@@ -152,3 +152,6 @@ local-data/
 private-data/
 test-uploads/
 ocr-output/
+
+# Private uploaded medical files
+**/PrivateUploads/

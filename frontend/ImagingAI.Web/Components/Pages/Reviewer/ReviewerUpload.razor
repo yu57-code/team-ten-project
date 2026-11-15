@@ -198,7 +198,10 @@
             var contentType = string.IsNullOrEmpty(file.ContentType)
                 ? (extension == ".pdf" ? "application/pdf" : "image/" + extension.TrimStart('.'))
                 : file.ContentType;
-            _selectedFiles.Add(new UploadFile(file.Name, file.Size, contentType));
+            _selectedFiles.Add(new UploadFile(file.Name,file.Size,contentType,file
+    )
+);
+
         }
     }
 
