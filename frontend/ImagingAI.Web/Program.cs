@@ -4,6 +4,7 @@ using ImagingAI.Web.Services.Interfaces;
 using ImagingAI.Web.Services.Mock;
 using MudBlazor;
 using MudBlazor.Services;
+using ImagingAI.Web.Services.Api;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,7 +32,15 @@ builder.Services.AddScoped<IAuthService, MockAuthService>();
 builder.Services.AddSingleton<MockDataStore>();
 builder.Services.AddSingleton<INavBadgeService, MockNavBadgeService>();
 builder.Services.AddSingleton<ICaseService, MockCaseService>();
-builder.Services.AddSingleton<IUploadService, MockUploadService>();
+
+builder.Services.AddHttpClient<IUploadService, ApiUploadService>(
+    client =>
+    {
+        client.BaseAddress = new Uri(
+            builder.Configuration["ApiSettings:BaseUrl"]
+            ?? "http://localhost:5142/");
+    });
+
 builder.Services.AddSingleton<IExceptionService, MockExceptionService>();
 builder.Services.AddSingleton<IAuditService, MockAuditService>();
 builder.Services.AddSingleton<ISystemMonitorService, MockSystemMonitorService>();

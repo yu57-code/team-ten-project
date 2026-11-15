@@ -131,7 +131,6 @@ docker/data/
 *.sqlite3
 *.db-journal
 
-<<<<<<< HEAD
 ## ==========================================
 ## 7. 測試影像與 AI 模型快取 (OCR / Medical Data)
 ## ==========================================
@@ -173,7 +172,6 @@ test_data/
 
 # 本機除錯紀錄
 debug/
-=======
 # PostgreSQL local backup files
 *.dump
 *.backup
@@ -195,4 +193,6 @@ local-data/
 private-data/
 test-uploads/
 ocr-output/
->>>>>>> origin/feature/backend
+
+# Private uploaded medical files
+**/PrivateUploads/
