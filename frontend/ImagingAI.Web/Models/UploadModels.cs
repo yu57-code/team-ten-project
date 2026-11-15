@@ -1,3 +1,6 @@
+
+using Microsoft.AspNetCore.Components.Forms;
+
 namespace ImagingAI.Web.Models;
 
 public enum UploadJobState
@@ -37,7 +40,12 @@ public sealed class UploadJob
 }
 
 /// <summary>要上傳的一個檔案。Content 由頁面讀取後提供（Mock 只用來計算雜湊）。</summary>
-public sealed record UploadFile(string FileName, long SizeBytes, string ContentType);
+
+public sealed record UploadFile(
+    string FileName,
+    long SizeBytes,
+    string ContentType,
+    IBrowserFile? BrowserFile = null);
 
 /// <summary>上傳表單送出的內容。</summary>
 public sealed record UploadRequest(IReadOnlyList<UploadFile> Files, string MedicalRecordNumber, string ReportType, string UploadedBy);
