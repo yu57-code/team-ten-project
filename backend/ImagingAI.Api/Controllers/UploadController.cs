@@ -10,6 +10,15 @@ public class UploadController : ControllerBase
 {
     private const long MaxFileSize = 20 * 1024 * 1024;
 
+    private static readonly HashSet<string> AllowedExtensions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg"
+        };
+
     private readonly IWebHostEnvironment _environment;
 
     public UploadController(IWebHostEnvironment environment)
@@ -37,7 +46,7 @@ public class UploadController : ControllerBase
         {
             return BadRequest(new
             {
-                message = "請選擇 PDF 檔案"
+                message = "請選擇 PDF、PNG、JPG 或 JPEG 檔案"
             });
         }
 
@@ -49,14 +58,14 @@ public class UploadController : ControllerBase
             });
         }
 
-        if (!string.Equals(
-            Path.GetExtension(file.FileName),
-            ".pdf",
-            StringComparison.OrdinalIgnoreCase))
+        string extension =
+            Path.GetExtension(file.FileName).ToLowerInvariant();
+
+        if (!AllowedExtensions.Contains(extension))
         {
             return BadRequest(new
             {
-                message = "目前只接受 PDF 檔案"
+                message = "目前只接受 PDF、PNG、JPG、JPEG 檔案"
             });
         }
 
@@ -67,9 +76,9 @@ public class UploadController : ControllerBase
 
         Directory.CreateDirectory(uploadFolder);
 
-        // 使用隨機名稱，避免原始檔名造成路徑問題
+        // 使用 GUID，保留檔案副檔名
         string storedFileName =
-            $"{Guid.NewGuid():N}.pdf";
+            $"{Guid.NewGuid():N}{extension}";
 
         string filePath = Path.Combine(
             uploadFolder,
@@ -80,39 +89,46 @@ public class UploadController : ControllerBase
             await using (var stream = new FileStream(
                 filePath,
                 FileMode.CreateNew,
-                FileAccess.Write))
+                FileAccess.Write,
+                FileShare.None,
+                81920,
+                useAsync: true))
             {
                 await file.CopyToAsync(
                     stream,
                     cancellationToken);
             }
 
-            // 檢查 PDF 檔案標頭
-            byte[] header = new byte[5];
+            // 檢查檔案標頭是否符合副檔名
+            byte[] header = new byte[8];
 
-            await using (var stream = System.IO.File.OpenRead(filePath))
+            int read;
+
+            await using (var stream =
+                System.IO.File.OpenRead(filePath))
             {
-                int read = await stream.ReadAsync(
-                    header,
+                read = await stream.ReadAsync(
+                    header.AsMemory(),
                     cancellationToken);
+            }
 
-                if (read != 5 ||
-                    System.Text.Encoding.ASCII.GetString(header)
-                        != "%PDF-")
+            if (!IsValidFileSignature(
+                header.AsSpan(0, read),
+                extension))
+            {
+                System.IO.File.Delete(filePath);
+
+                return BadRequest(new
                 {
-                    System.IO.File.Delete(filePath);
-
-                    return BadRequest(new
-                    {
-                        message = "檔案不是有效的 PDF 格式"
-                    });
-                }
+                    message = "檔案內容與副檔名不符，或檔案格式不正確"
+                });
             }
 
             // 計算 SHA-256
             string sha256;
 
-            await using (var stream = System.IO.File.OpenRead(filePath))
+            await using (var stream =
+                System.IO.File.OpenRead(filePath))
             {
                 byte[] hash = await SHA256.HashDataAsync(
                     stream,
@@ -138,6 +154,7 @@ public class UploadController : ControllerBase
         }
         catch
         {
+            // 上傳或處理失敗時，清除暫存檔案
             if (System.IO.File.Exists(filePath))
             {
                 System.IO.File.Delete(filePath);
@@ -145,5 +162,41 @@ public class UploadController : ControllerBase
 
             throw;
         }
+    }
+
+    // 驗證 PDF、PNG、JPG、JPEG 的檔案標頭
+    private static bool IsValidFileSignature(
+        ReadOnlySpan<byte> header,
+        string extension)
+    {
+        return extension switch
+        {
+            ".pdf" =>
+                header.Length >= 5 &&
+                header[..5].SequenceEqual(
+                    new byte[]
+                    {
+                        0x25, 0x50, 0x44, 0x46, 0x2D
+                    }),
+
+            ".png" =>
+                header.Length >= 8 &&
+                header[..8].SequenceEqual(
+                    new byte[]
+                    {
+                        0x89, 0x50, 0x4E, 0x47,
+                        0x0D, 0x0A, 0x1A, 0x0A
+                    }),
+
+            ".jpg" or ".jpeg" =>
+                header.Length >= 3 &&
+                header[..3].SequenceEqual(
+                    new byte[]
+                    {
+                        0xFF, 0xD8, 0xFF
+                    }),
+
+            _ => false
+        };
     }
 }
