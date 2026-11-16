@@ -33,7 +33,7 @@ TARGET_ENTITIES = [
     "PHONE_NUMBER",
     "STUDY_ID",
     "ADDRESS",
-    # 專案尚未定義保留規則，先辨識並標記待確認
+    # 辨識醫師姓名的範圍，避免通用 PERSON 辨識器誤遮
     "MEDICAL_STAFF_NAME",
     # 出生日期、就診日期、醫院名稱依專案規則保留，不列入辨識（見 deid_rules.KEEP_ENTITIES）
 ]
@@ -154,8 +154,21 @@ class PresidioService:
         )
 
         filtered_results = []
+        staff_spans = [
+            (result.start, result.end)
+            for result in results
+            if result.entity_type == "MEDICAL_STAFF_NAME"
+        ]
 
         for result in results:
+
+            if result.entity_type == "MEDICAL_STAFF_NAME":
+                continue
+            if result.entity_type == "PERSON" and any(
+                start < result.end and result.start < end
+                for start, end in staff_spans
+            ):
+                continue
 
             value = text[
                 result.start:result.end

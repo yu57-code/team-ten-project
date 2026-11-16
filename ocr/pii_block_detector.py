@@ -15,6 +15,7 @@ import json
 import re
 import sys
 from pathlib import Path
+from itertools import groupby
 from statistics import median
 
 from deid_rules import (
@@ -242,6 +243,16 @@ class Layout:
         """
         標籤正下方的欄位值（表格欄位或換行的姓名）。
         """
+
+        # 同列已有下一個欄位時，不把下一列的內容當成目前欄位的值。
+        if any(
+            block is not anchor
+            and self.is_label(block)
+            and 0 <= block["bbox"][0] - anchor["bbox"][2] <= anchor["height"] * 10
+            and vertical_overlap(anchor, block) >= 0.5
+            for block in self.blocks
+        ):
+            return []
 
         chain = []
         current = anchor
@@ -492,25 +503,30 @@ class Detector:
         # ---------- (3) 同一行合併文字（跨區塊） ----------
         for line in layout.lines:
 
-            if len(line["blocks"]) < 2:
-                continue
+            def is_non_pii_field(block):
+                label = layout.labels.get(block["block_id"])
+                return label is not None and label[1] is None
 
-            text, segments = compose(
-                (block["block_id"], block["text"], 0)
-                for block in line["blocks"]
-            )
-
-            for result in self.service.analyze(text):
-
-                if result.entity_type not in LINE_SCAN_ENTITIES:
+            for boundary, group in groupby(line["blocks"], key=is_non_pii_field):
+                candidates = list(group)
+                if boundary or len(candidates) < 2:
                     continue
 
-                for block_id, start, end in map_span(result.start, result.end, segments):
+                text, segments = compose(
+                    (block["block_id"], block["text"], 0)
+                    for block in candidates
+                )
 
-                    detections.append(self._detection(
-                        layout, block_id, result.entity_type, result.score,
-                        "line_context", start, end, [],
-                    ))
+                for result in self.service.analyze(text):
+
+                    if result.entity_type not in LINE_SCAN_ENTITIES:
+                        continue
+
+                    for block_id, start, end in map_span(result.start, result.end, segments):
+                        detections.append(self._detection(
+                            layout, block_id, result.entity_type, result.score,
+                            "line_context", start, end, [],
+                        ))
 
         return layout, detections, review_items, halt_reasons
 

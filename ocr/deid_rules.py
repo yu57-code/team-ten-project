@@ -66,7 +66,7 @@ PII_FIELD_LABELS = [
 # 非個資欄位標籤：用來判斷「下一個欄位開始」
 NON_PII_FIELD_LABELS = (
     r"age|gender|sex|height|weight|bmi|bsa|blood\s+type"
-    r"|年齡|性別|身高|體重|血型"
+    r"|年齡|性[別别]|科[別别]|身高|體重|血型"
 )
 
 # 姓名後方不可能接續的欄位字詞（避免英文姓名吃到下一個欄位）
@@ -145,15 +145,14 @@ MASK_ENTITIES = {
 }
 
 # 專案尚未定義規則：先保守遮蔽，並標記待確認
-POLICY_PENDING_ENTITIES = {
-    "MEDICAL_STAFF_NAME",
-}
+POLICY_PENDING_ENTITIES = set()
 
-# 專案規則：保留不遮蔽（出生日期、就診日期、醫院名稱）
+# 專案規則：保留不遮蔽
 KEEP_ENTITIES = {
     "DATE_OF_BIRTH",
     "VISIT_DATE",
     "INSTITUTION_NAME",
+    "MEDICAL_STAFF_NAME",
 }
 
 # 遮蔽後不可殘留的必要個資：無法定位時停止自動遮蔽

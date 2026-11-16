@@ -211,7 +211,7 @@ class OtherPiiTest(DetectorTestBase):
             {"MRN", "TW_NATIONAL_ID", "PHONE_NUMBER", "EMAIL_ADDRESS"} <= types
         )
 
-    def test_dates_and_institution_kept_staff_flagged(self):
+    def test_dates_institution_and_staff_kept(self):
 
         plan = self.plan_for([
             ("Date of Birth", 100, 100, 280, 130),
@@ -224,10 +224,8 @@ class OtherPiiTest(DetectorTestBase):
 
         masks = self.masked(plan)
 
-        # 出生日期、就診日期、醫院名稱依專案規則保留
-        self.assertEqual(set(masks), {"block_0003"})
-        self.assertIn("POLICY_PENDING", masks["block_0003"]["review_reasons"])
-        self.assertEqual(plan["policy_pending_entities"], ["MEDICAL_STAFF_NAME"])
+        self.assertEqual(masks, {})
+        self.assertEqual(plan["policy_pending_entities"], [])
 
 
 # =====================================================

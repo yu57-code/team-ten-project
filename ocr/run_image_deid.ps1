@@ -18,7 +18,12 @@ param(
     [string]$Name = "patient_test",
     [switch]$RunInitialOcr,
     [string]$ExpectedPii = "",
-    [string]$Pdf = ""
+    [string]$Pdf = "",
+    [string]$PdfOcrJsonPath = "",
+    [string]$PdfPageImageDir = "",
+    [string]$ResultDirectory = "",
+    [string]$OcrPython = "",
+    [string]$DeidPython = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -35,6 +40,9 @@ function Resolve-ProjectPath([string]$Path) {
 
 $Image = Resolve-ProjectPath $Image
 $OcrJson = Resolve-ProjectPath $OcrJson
+if ($OcrPython) { $Py = Resolve-ProjectPath $OcrPython }
+if ($DeidPython) { $PyDeid = Resolve-ProjectPath $DeidPython }
+if ($ExpectedPii) { $ExpectedPii = Resolve-ProjectPath $ExpectedPii }
 
 if ($Pdf) {
     $Pdf = Resolve-ProjectPath $Pdf
@@ -44,6 +52,7 @@ if ($Pdf) {
 }
 
 $OutputDir = Join-Path $Root "output"
+if ($ResultDirectory) { $OutputDir = Resolve-ProjectPath $ResultDirectory }
 $PrivateDir = Join-Path $OutputDir "private"
 New-Item -ItemType Directory -Force $PrivateDir | Out-Null
 
@@ -86,6 +95,17 @@ if ($Pdf) {
     # 原始頁面圖片與 OCR 含個資，存放於 private
     $PdfOcrJson = Join-Path $PrivateDir "${Name}_ocr_result.json"
     $PageImageDir = Join-Path $PrivateDir "${Name}_pages"
+    if ($PdfOcrJsonPath -or $PdfPageImageDir) {
+        if (-not $PdfOcrJsonPath -or -not $PdfPageImageDir -or $RunInitialOcr) {
+            throw "重用原始 OCR 時必須提供 JSON 與頁面目錄。"
+        }
+        $PdfOcrJson = Resolve-ProjectPath $PdfOcrJsonPath
+        $PageImageDir = Resolve-ProjectPath $PdfPageImageDir
+        if (-not (Test-Path -LiteralPath $PdfOcrJson -PathType Leaf) -or
+            -not (Test-Path -LiteralPath $PageImageDir -PathType Container)) {
+            throw "找不到既有的 OCR JSON 或頁面目錄。"
+        }
+    }
     $DeidPageDir = Join-Path $OutputDir "${Name}_deidentified_pages"
     New-Item -ItemType Directory -Force $DeidPageDir | Out-Null
 
@@ -126,12 +146,14 @@ if ($Pdf) {
             "--output", $PageDeidImage, "--reocr-json", $PageReOcr, "--report", $PageReport
         )
 
-        Invoke-Step "第 $page/$PageCount 頁 Step 6 驗證" $PyDeid @(
+        $pageVerifyArgs = @(
             "verify_deid.py", "--plan", $PagePlan, "--report", $PageReport,
             "--reocr-json", $PageReOcr, "--output", $PageFinal,
             "--verification-report", $PageVerification,
             "--source-type", "pdf", "--page", $page
         )
+        if ($ExpectedPii) { $pageVerifyArgs += @("--expected-pii", $ExpectedPii) }
+        Invoke-Step "第 $page/$PageCount 頁 Step 6 驗證" $PyDeid $pageVerifyArgs
 
         $PageFinals += $PageFinal
         $PagePlans += $PagePlan
