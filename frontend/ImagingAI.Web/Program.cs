@@ -38,7 +38,7 @@ builder.Services.AddHttpClient<IUploadService, ApiUploadService>(
     {
         client.BaseAddress = new Uri(
             builder.Configuration["ApiSettings:BaseUrl"]
-            ?? "http://localhost:5142/");
+            ?? "http://localhost:5089/");
     });
 
 builder.Services.AddSingleton<IExceptionService, MockExceptionService>();
