@@ -47,8 +47,14 @@ public sealed class ApiUploadService : IUploadService
             stream.Position = 0;
             using var fileContent = new StreamContent(stream);
 
-            fileContent.Headers.ContentType =
-                new MediaTypeHeaderValue("application/pdf");
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(
+                Path.GetExtension(file.FileName).ToLowerInvariant() switch
+                {
+                    ".pdf" => "application/pdf",
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    _ => "application/octet-stream"
+                });
 
             form.Add(
                 fileContent,
@@ -92,7 +98,7 @@ public sealed class ApiUploadService : IUploadService
                 CaseId = result.CaseId,
                 FileName = result.FileName,
                 SizeBytes = result.FileSize,
-                Description = "PDF 已上傳",
+                Description = "檔案已上傳",
                 State = result.Duplicate ? UploadJobState.Duplicate : UploadJobState.Running,
                 StageIndex = 0,
                 Progress = 0,

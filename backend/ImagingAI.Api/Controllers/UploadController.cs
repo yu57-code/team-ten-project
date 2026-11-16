@@ -21,6 +21,15 @@ public class UploadController(
 {
     private const long MaxFileSize = 20 * 1024 * 1024;
 
+    private static readonly HashSet<string> AllowedExtensions =
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".pdf",
+            ".png",
+            ".jpg",
+            ".jpeg"
+        };
+
     [HttpPost]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxFileSize + 1024 * 1024)]
@@ -58,7 +67,7 @@ public class UploadController(
         {
             return BadRequest(new
             {
-                message = "請選擇 PDF 檔案"
+                message = "請選擇 PDF、PNG、JPG 或 JPEG 檔案"
             });
         }
 
@@ -70,14 +79,14 @@ public class UploadController(
             });
         }
 
-        if (!string.Equals(
-            Path.GetExtension(file.FileName),
-            ".pdf",
-            StringComparison.OrdinalIgnoreCase))
+        string extension =
+            Path.GetExtension(file.FileName).ToLowerInvariant();
+
+        if (!AllowedExtensions.Contains(extension))
         {
             return BadRequest(new
             {
-                message = "目前只接受 PDF 檔案"
+                message = "目前只接受 PDF、PNG、JPG、JPEG 檔案"
             });
         }
 
@@ -86,9 +95,9 @@ public class UploadController(
             environment.ContentRootPath,
             "PrivateUploads");
 
-        // 使用隨機名稱，避免原始檔名造成路徑問題
+        // 使用 GUID 並保留已驗證的副檔名。
         string storedFileName =
-            $"{Guid.NewGuid():N}.pdf";
+            $"{Guid.NewGuid():N}{extension}";
 
         string filePath = Path.Combine(
             uploadFolder,
@@ -104,7 +113,10 @@ public class UploadController(
             await using (var stream = new FileStream(
                 filePath,
                 FileMode.CreateNew,
-                FileAccess.Write))
+                FileAccess.Write,
+                FileShare.None,
+                81920,
+                useAsync: true))
             {
                 ownsFile = true;
                 await file.CopyToAsync(
@@ -112,28 +124,33 @@ public class UploadController(
                     cancellationToken);
             }
 
-            // 檢查 PDF 檔案標頭
-            byte[] header = new byte[5];
+            // 檢查檔案標頭是否符合副檔名
+            byte[] header = new byte[8];
 
-            await using (var stream = System.IO.File.OpenRead(filePath))
+            int read;
+
+            await using (var stream =
+                System.IO.File.OpenRead(filePath))
             {
-                int read = await stream.ReadAtLeastAsync(
+                read = await stream.ReadAtLeastAsync(
                     header, header.Length, false, cancellationToken);
-                if (read != header.Length ||
-                    System.Text.Encoding.ASCII.GetString(header)
-                        != "%PDF-")
+            }
+
+            if (!IsValidFileSignature(
+                header.AsSpan(0, read),
+                extension))
+            {
+                return BadRequest(new
                 {
-                    return BadRequest(new
-                    {
-                        message = "檔案不是有效的 PDF 格式"
-                    });
-                }
+                    message = "檔案內容與副檔名不符，或檔案格式不正確"
+                });
             }
 
             // 計算 SHA-256
             string sha256;
 
-            await using (var stream = System.IO.File.OpenRead(filePath))
+            await using (var stream =
+                System.IO.File.OpenRead(filePath))
             {
                 byte[] hash = await SHA256.HashDataAsync(
                     stream,
@@ -159,7 +176,7 @@ public class UploadController(
                     return StatusCode(503, new { message = "測試上傳帳號未啟用" });
             }
 
-            // A transaction-scoped lock serializes submissions for the same PDF.
+            // A transaction-scoped lock serializes submissions for the same file.
             await using (var dedupLock = Command("SELECT pg_advisory_xact_lock(hashtextextended(@hash, 0))"))
             {
                 dedupLock.Parameters.AddWithValue("hash", sha256);
@@ -199,7 +216,7 @@ public class UploadController(
                     return Conflict(new { message = "相同檔案的病歷關聯需確認" });
                 }
 
-                return Accepted(Result(duplicateId, previousStatus!, true, file.Length));
+                return Accepted(Result(duplicateId, previousStatus!, true, file.Length, extension));
             }
 
             // Auto-detection and the existing UI label are provisional text values.
@@ -256,7 +273,7 @@ public class UploadController(
             cancellationToken.ThrowIfCancellationRequested();
             preserveFiles = true;
             await transaction.CommitAsync(CancellationToken.None);
-            return Accepted(Result(reportId, "UPLOADED", false, file.Length));
+            return Accepted(Result(reportId, "UPLOADED", false, file.Length, extension));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -288,14 +305,15 @@ public class UploadController(
         }
     }
 
-    private static object Result(long reportId, string processingStatus, bool duplicate, long fileSize) => new
+    private static object Result(long reportId, string processingStatus, bool duplicate, long fileSize,
+        string extension) => new
     {
         status = "Success",
         caseId = reportId.ToString(CultureInfo.InvariantCulture),
         processingStatus,
         duplicate,
         fileSize,
-        fileName = $"病例-{reportId}.pdf"
+        fileName = $"病例-{reportId}{extension}"
     };
 
     private void DeleteUncommittedFile(string path)
@@ -309,5 +327,41 @@ public class UploadController(
             logger.LogWarning("Could not clean up an uncommitted upload ({ErrorType})",
                 exception.GetType().Name);
         }
+    }
+
+    // 驗證 PDF、PNG、JPG、JPEG 的檔案標頭
+    private static bool IsValidFileSignature(
+        ReadOnlySpan<byte> header,
+        string extension)
+    {
+        return extension switch
+        {
+            ".pdf" =>
+                header.Length >= 5 &&
+                header[..5].SequenceEqual(
+                    new byte[]
+                    {
+                        0x25, 0x50, 0x44, 0x46, 0x2D
+                    }),
+
+            ".png" =>
+                header.Length >= 8 &&
+                header[..8].SequenceEqual(
+                    new byte[]
+                    {
+                        0x89, 0x50, 0x4E, 0x47,
+                        0x0D, 0x0A, 0x1A, 0x0A
+                    }),
+
+            ".jpg" or ".jpeg" =>
+                header.Length >= 3 &&
+                header[..3].SequenceEqual(
+                    new byte[]
+                    {
+                        0xFF, 0xD8, 0xFF
+                    }),
+
+            _ => false
+        };
     }
 }

@@ -19,6 +19,14 @@ public sealed class PdfOcrWorker(
     ILogger<PdfOcrWorker> logger) : BackgroundService
 {
     private const long WorkerLock = 6152456921939523001L;
+    private const string ImageWorkingPdfName = "source_image.pdf";
+
+    private string ResolveUploadPath(string storageUri)
+    {
+        if (!Regex.IsMatch(storageUri, @"\APrivateUploads/[a-f0-9]{32}\.(pdf|png|jpg|jpeg)\z"))
+            throw new InvalidDataException("Unexpected upload storage key");
+        return Path.Combine(environment.ContentRootPath, storageUri);
+    }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -335,8 +343,7 @@ public sealed class PdfOcrWorker(
         int? exitCode = null;
         try
         {
-            if (!Regex.IsMatch(storageUri, @"\APrivateUploads/[a-f0-9]{32}\.pdf\z"))
-                throw new InvalidDataException();
+            var upload = ResolveUploadPath(storageUri);
             var caseDirectory = CaseDirectory(caseId);
             var ocrId = (await File.ReadAllTextAsync(
                 Path.Combine(caseDirectory, "current.txt"), cancellationToken)).Trim();
@@ -360,7 +367,10 @@ public sealed class PdfOcrWorker(
             else if (match == "MATCH")
             {
                 await TryWriteTestPatientAsync(connection, caseId, extraction, cancellationToken);
-                var pdf = Path.Combine(environment.ContentRootPath, storageUri);
+                var pdf = Path.GetExtension(upload) == ".pdf"
+                    ? upload : Path.Combine(source, ImageWorkingPdfName);
+                if (!File.Exists(pdf))
+                    throw new FileNotFoundException();
                 var ocr = Path.Combine(source, "ocr_result.json");
                 using var raw = JsonDocument.Parse(await File.ReadAllTextAsync(ocr, cancellationToken));
                 var pageCount = raw.RootElement.GetProperty("total_pages").GetInt32();
@@ -521,20 +531,21 @@ public sealed class PdfOcrWorker(
     private async Task<int> RunOcrAsync(long caseId, string storageUri, string python,
         string script, TimeSpan timeout, CancellationToken stoppingToken)
     {
-        if (!Regex.IsMatch(storageUri, @"\APrivateUploads/[a-f0-9]{32}\.pdf\z"))
-            throw new InvalidDataException("Unexpected upload storage key");
-
-        var pdf = Path.Combine(environment.ContentRootPath, storageUri);
-        if (!File.Exists(pdf))
+        var upload = ResolveUploadPath(storageUri);
+        if (!File.Exists(upload))
             throw new FileNotFoundException();
 
         var caseDirectory = CaseDirectory(caseId);
         var attempt = Path.Combine(caseDirectory, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(attempt);
+        PrivateJsonFieldsStore.RestrictAttemptDirectory(attempt);
         var output = Path.Combine(attempt, "ocr_result.json");
 
+        string[] inputArgs = Path.GetExtension(upload) == ".pdf"
+            ? ["--pdf", upload]
+            : ["--image", upload, "--working-pdf", Path.Combine(attempt, ImageWorkingPdfName)];
         var exit = await RunPythonAsync(python, script,
-            ["--pdf", pdf, "--output", output, "--image-dir", Path.Combine(attempt, "pages")],
+            [.. inputArgs, "--output", output, "--image-dir", Path.Combine(attempt, "pages")],
             timeout, stoppingToken);
         if (exit != 0)
             return exit;

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from paddleocr import PaddleOCR
 
-from pdf_reader import pdf_to_images
+from pdf_reader import image_to_single_page_pdf, pdf_to_images
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -21,12 +21,19 @@ OUTPUT_JSON = OUTPUT_DIR / "pdf_ocr_result.json"
 def main():
 
     parser = argparse.ArgumentParser(description="PDF 轉圖片 + PaddleOCR 逐頁辨識")
-    parser.add_argument("--pdf", type=Path, default=PDF_PATH)
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--pdf", type=Path)
+    source.add_argument("--image", type=Path)
+    parser.add_argument("--working-pdf", type=Path)
     parser.add_argument("--output", type=Path, default=OUTPUT_JSON)
     parser.add_argument("--image-dir", type=Path, default=IMAGE_DIR)
     args = parser.parse_args()
 
-    pdf_path = args.pdf
+    if (args.image is None) != (args.working_pdf is None):
+        parser.error("--image 和 --working-pdf 必須同時指定")
+    pdf_path = args.pdf or args.working_pdf or PDF_PATH
+    if args.image:
+        image_to_single_page_pdf(args.image, pdf_path)
     output_json = args.output
 
     if not pdf_path.exists():

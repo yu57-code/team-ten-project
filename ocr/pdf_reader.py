@@ -2,6 +2,20 @@ import fitz
 from pathlib import Path
 
 
+def image_to_single_page_pdf(image_path, pdf_path):
+    image_path = Path(image_path)
+    if image_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+        raise ValueError("只支援 PNG、JPG 或 JPEG")
+
+    with fitz.open(str(image_path)) as image:
+        if image.is_pdf or len(image) != 1:
+            raise ValueError("需要單頁圖片")
+        pdf_bytes = image.convert_to_pdf()
+
+    with Path(pdf_path).open("xb") as target:
+        target.write(pdf_bytes)
+
+
 def pdf_to_images(pdf_path, output_dir, dpi=150):
 
     pdf_path = Path(pdf_path)
