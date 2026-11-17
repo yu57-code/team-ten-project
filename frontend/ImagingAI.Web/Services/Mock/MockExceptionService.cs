@@ -126,4 +126,9 @@ public sealed class MockExceptionService(MockDataStore store) : IExceptionServic
             return Task.FromResult(OperationResult.Ok("已標記為無法處理並結案（不寫入 FHIR）"));
         }
     }
+
+    public Task<OperationResult> RevalidateAsync(string exceptionId,string actor)
+    {
+        return Task.FromResult(OperationResult.Fail("Mock 模式不支援獨立重新驗證"));
+    }
 }
