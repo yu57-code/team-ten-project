@@ -1,0 +1,169 @@
+@page "/reviewer/audit"
+@inject IAuditService AuditService
+@inject IAuthService Auth
+
+<PageTitle>稽核軌跡｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="稽核軌跡"
+            Subtitle="病例資料的每次上傳、解析、修正、審核與 FHIR 寫入紀錄，可追溯資料版本的前後差異；紀錄唯讀，不可修改或刪除。" />
+
+<section class="ia-card filters">
+    <div class="filter-grid">
+        <div>
+            <label class="ia-label" for="audit-range">時間範圍</label>
+            <select id="audit-range" class="ia-field" value="@_range" @onchange="OnRangeChangedAsync">
+                <option value="@AuditRange.Last24Hours">近 24 小時</option>
+                <option value="@AuditRange.Last7Days">近 7 天</option>
+                <option value="@AuditRange.All">全部</option>
+            </select>
+        </div>
+        <div>
+            <label class="ia-label" for="audit-actor">操作者</label>
+            <select id="audit-actor" class="ia-field" value="@_actor" @onchange="OnActorChangedAsync">
+                <option value="@AuditActorFilter.All">全部</option>
+                <option value="@AuditActorFilter.Me">只看我</option>
+                <option value="@AuditActorFilter.System">系統（自動）</option>
+            </select>
+        </div>
+        <div>
+            <label class="ia-label" for="audit-case">病例 ID</label>
+            <input id="audit-case" class="ia-field" type="search" placeholder="輸入病例 ID"
+                   value="@_caseKeyword" @oninput="OnCaseKeywordChangedAsync" />
+        </div>
+    </div>
+    <FilterChips TValue="AuditKind?" Options="KindOptions" Value="_kind" ValueChanged="OnKindChangedAsync" AriaLabel="依動作篩選" />
+</section>
+
+<div class="layout">
+    <section class="ia-card entries">
+        <div class="ia-table-wrap">
+            <table class="ia-table">
+                <thead>
+                    <tr><th>時間</th><th>操作者</th><th>動作</th><th>病例</th><th>資料版本</th><th><span class="ia-sr-only">操作</span></th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var entry in _entries)
+                    {
+                        var kind = StatusStyles.Display(entry.Kind);
+                        <tr class="@(entry.Id == _selected?.Id ? "is-selected" : null)">
+                            <td class="muted">@entry.Time.ToString("MM/dd HH:mm")</td>
+                            <td>@entry.Actor</td>
+                            <td><StatusBadge Tone="kind.Tone" Text="@kind.Label" /></td>
+                            <td class="ia-mono">@(entry.CaseId ?? "—")</td>
+                            <td class="ia-mono">@entry.Version</td>
+                            <td><button type="button" class="pick" @onclick="() => _selected = entry">詳細</button></td>
+                        </tr>
+                    }
+                    @if (_entries.Count == 0)
+                    {
+                        <tr><td colspan="6" class="empty">沒有符合條件的紀錄</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+
+    <section class="ia-card detail">
+        @if (_selected is null)
+        {
+            <p class="muted small">點選左側「詳細」查看資料修改前後的差異。</p>
+        }
+        else
+        {
+            var kind = StatusStyles.Display(_selected.Kind);
+            <div class="detail-head">
+                <h2 class="detail-title">@kind.Label</h2>
+                <span class="ia-mono muted">@_selected.ActionCode・@_selected.Id</span>
+            </div>
+            <p class="muted small">
+                @_selected.Time.ToString("MM/dd HH:mm")・@_selected.Actor・病例 <span class="ia-mono">@(_selected.CaseId ?? "—")</span>・資料版本 @_selected.Version
+            </p>
+            <p class="note">@_selected.Note</p>
+            <div>
+                <div class="code-label">BEFORE_JSON</div>
+                <pre class="code">@_selected.BeforeJson</pre>
+            </div>
+            <div>
+                <div class="code-label">AFTER_JSON</div>
+                <pre class="code code--after">@_selected.AfterJson</pre>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    public enum AuditRange { Last24Hours, Last7Days, All }
+
+    private static readonly IReadOnlyList<ChipOption<AuditKind?>> KindOptions =
+    [
+        new(null, "全部"),
+        new(AuditKind.Upload, "上傳"),
+        new(AuditKind.AiParse, "AI 解析"),
+        new(AuditKind.Edit, "修正"),
+        new(AuditKind.Review, "審核"),
+        new(AuditKind.FhirWrite, "FHIR 寫入"),
+    ];
+
+    private IReadOnlyList<AuditEntry> _entries = [];
+    private AuditEntry? _selected;
+
+    private AuditRange _range = AuditRange.Last24Hours;
+    private AuditActorFilter _actor = AuditActorFilter.All;
+    private AuditKind? _kind;
+    private string _caseKeyword = string.Empty;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        DateTime? since = _range switch
+        {
+            AuditRange.Last24Hours => AuditService.Now.AddHours(-24),
+            AuditRange.Last7Days => AuditService.Now.AddDays(-7),
+            _ => null,
+        };
+
+        // 審核人員：CaseRelatedOnly = true，不含權限變更與登入紀錄
+        _entries = await AuditService.GetEntriesAsync(new AuditQuery(
+            Since: since,
+            Actor: _actor,
+            CurrentUserName: UserName,
+            Kind: _kind,
+            CaseIdKeyword: _caseKeyword,
+            CaseRelatedOnly: true));
+
+        _selected = _entries.FirstOrDefault(e => e.Id == _selected?.Id) ?? _entries.FirstOrDefault();
+    }
+
+    private async Task OnRangeChangedAsync(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<AuditRange>(e.Value?.ToString(), out var range))
+        {
+            _range = range;
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnActorChangedAsync(ChangeEventArgs e)
+    {
+        if (Enum.TryParse<AuditActorFilter>(e.Value?.ToString(), out var actor))
+        {
+            _actor = actor;
+            await LoadAsync();
+        }
+    }
+
+    private async Task OnCaseKeywordChangedAsync(ChangeEventArgs e)
+    {
+        _caseKeyword = e.Value?.ToString() ?? string.Empty;
+        await LoadAsync();
+    }
+
+    private async Task OnKindChangedAsync(AuditKind? kind)
+    {
+        _kind = kind;
+        await LoadAsync();
+    }
+}

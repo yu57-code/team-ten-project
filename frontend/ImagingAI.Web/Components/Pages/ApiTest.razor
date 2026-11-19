@@ -1,0 +1,122 @@
+@page "/api-test"
+@rendermode InteractiveServer
+
+@using ImagingAI.Web.Services
+@using MudBlazor
+
+@inject ApiHealthService ApiHealthService
+
+<PageTitle>後端 API 連線測試</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-8">
+
+    <MudPaper Class="pa-6" Elevation="2">
+
+        <MudText Typo="Typo.h4" GutterBottom="true">
+            後端 API 連線測試
+        </MudText>
+
+        <MudText Typo="Typo.body1" Class="mb-5">
+            測試 Blazor Web App 是否能成功連接 ASP.NET Core Web API。
+        </MudText>
+
+        <MudButton Variant="Variant.Filled"
+                   Color="Color.Primary"
+                   Disabled="@_loading"
+                   OnClick="TestConnectionAsync">
+
+            @if (_loading)
+            {
+                <MudText>連線測試中...</MudText>
+            }
+            else
+            {
+                <MudText>測試後端連線</MudText>
+            }
+
+        </MudButton>
+
+        @if (_loading)
+        {
+            <MudProgressLinear Indeterminate="true"
+                               Color="Color.Primary"
+                               Class="mt-4" />
+        }
+
+        @if (_result != null)
+        {
+            <MudAlert Severity="Severity.Success" Class="mt-5">
+
+                後端 API 連線成功！
+
+            </MudAlert>
+
+            <MudPaper Class="pa-4 mt-4" Outlined="true">
+
+                <MudText>
+                    <b>Status：</b> @_result.Status
+                </MudText>
+
+                <MudText>
+                    <b>Service：</b> @_result.Service
+                </MudText>
+
+                <MudText>
+                    <b>Message：</b> @_result.Message
+                </MudText>
+
+                <MudText>
+                    <b>Timestamp：</b> @_result.Timestamp
+                </MudText>
+
+            </MudPaper>
+        }
+
+        @if (!string.IsNullOrEmpty(_error))
+        {
+            <MudAlert Severity="Severity.Error" Class="mt-5">
+
+                後端 API 連線失敗：@_error
+
+            </MudAlert>
+        }
+
+    </MudPaper>
+
+</MudContainer>
+
+@code {
+
+    private bool _loading = false;
+
+    private ApiHealthResponse? _result;
+
+    private string? _error;
+
+    private async Task TestConnectionAsync()
+    {
+        _loading = true;
+
+        _result = null;
+
+        _error = null;
+
+        try
+        {
+            _result = await ApiHealthService.CheckHealthAsync();
+
+            if (_result == null)
+            {
+                _error = "後端沒有回傳有效資料。";
+            }
+        }
+        catch (Exception ex)
+        {
+            _error = ex.Message;
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

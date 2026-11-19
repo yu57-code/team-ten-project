@@ -1,0 +1,536 @@
+@page "/admin/audit"
+
+@using System.Text
+@using MudBlazor
+@using ImagingAI.Web.Services
+
+@inject IAuditService AuditService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+@inject BrowserDownloadService Downloader
+
+<PageTitle>稽核軌跡｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="稽核軌跡 Audit Trail"
+            Subtitle="記錄每次上傳、解析、修正、審核、FHIR 寫入、權限變更、登入與系統設定；紀錄唯讀，不可修改或刪除。">
+
+    <Actions>
+        <MudButton Variant="Variant.Outlined"
+                   Class="ia-btn"
+                   StartIcon="@Icons.Material.Outlined.Download"
+                   Disabled="@(_entries.Count == 0)"
+                   OnClick="ExportCsvAsync">
+            匯出 CSV
+        </MudButton>
+    </Actions>
+
+</PageHeader>
+
+<section class="ia-card filters">
+
+    <div>
+        <label class="ia-label" for="a-range">
+            時間範圍
+        </label>
+
+        <select id="a-range"
+                class="ia-field"
+                value="@_range"
+                @onchange="OnRangeChangedAsync">
+
+            <option value="@AuditRange.Last24Hours">
+                近 24 小時
+            </option>
+
+            <option value="@AuditRange.Last7Days">
+                近 7 天
+            </option>
+
+            <option value="@AuditRange.All">
+                全部
+            </option>
+
+        </select>
+    </div>
+
+    <div>
+        <label class="ia-label" for="a-actor">
+            操作者
+        </label>
+
+        <select id="a-actor"
+                class="ia-field"
+                value="@_actor"
+                @onchange="OnActorChangedAsync">
+
+            <option value="@AuditActorFilter.All">
+                全部
+            </option>
+
+            <option value="@AuditActorFilter.Users">
+                使用者
+            </option>
+
+            <option value="@AuditActorFilter.System">
+                系統（自動）
+            </option>
+
+        </select>
+    </div>
+
+    <div>
+        <label class="ia-label" for="a-kind">
+            動作類型
+        </label>
+
+        <select id="a-kind"
+                class="ia-field"
+                value="@(_kind?.ToString() ?? string.Empty)"
+                @onchange="OnKindChangedAsync">
+
+            <option value="">
+                全部
+            </option>
+
+            @foreach (var kind in Enum.GetValues<AuditKind>())
+            {
+                <option value="@kind">
+                    @StatusStyles.Display(kind).Label
+                </option>
+            }
+
+        </select>
+    </div>
+
+    <div>
+        <label class="ia-label" for="a-case">
+            病例 ID
+        </label>
+
+        <input id="a-case"
+               class="ia-field"
+               type="search"
+               placeholder="輸入病例 ID"
+               value="@_caseKeyword"
+               @oninput="OnCaseKeywordChangedAsync" />
+    </div>
+
+</section>
+
+<div class="layout">
+
+    <!-- 左側：稽核紀錄列表 -->
+
+    <section class="ia-card entries">
+
+        <div class="ia-table-wrap">
+
+            <table class="ia-table">
+
+                <thead>
+                    <tr>
+                        <th>時間</th>
+                        <th>操作者</th>
+                        <th>動作</th>
+                        <th>病例</th>
+                        <th>版本</th>
+                        <th>
+                            <span class="ia-sr-only">
+                                操作
+                            </span>
+                        </th>
+                    </tr>
+                </thead>
+
+                <tbody>
+
+                    @foreach (var entry in _entries)
+                    {
+                        var kind = StatusStyles.Display(entry.Kind);
+
+                        <tr class="@(entry.Id == _selected?.Id ? "is-selected" : null)">
+
+                            <td class="muted">
+                                @entry.Time.ToString("MM/dd HH:mm")
+                            </td>
+
+                            <td>
+                                @entry.Actor
+                            </td>
+
+                            <td>
+                                <StatusBadge Tone="kind.Tone"
+                                             Text="@kind.Label" />
+                            </td>
+
+                            <td class="ia-mono">
+                                @(entry.CaseId ?? "—")
+                            </td>
+
+                            <td class="ia-mono">
+                                @entry.Version
+                            </td>
+
+                            <td>
+                                <button type="button"
+                                        class="pick"
+                                        @onclick="() => SelectEntry(entry)">
+                                    詳細
+                                </button>
+                            </td>
+
+                        </tr>
+                    }
+
+                    @if (_entries.Count == 0)
+                    {
+                        <tr>
+                            <td colspan="6" class="empty">
+                                沒有符合條件的紀錄
+                            </td>
+                        </tr>
+                    }
+
+                </tbody>
+
+            </table>
+
+        </div>
+
+    </section>
+
+    <!-- 右側：稽核紀錄詳細資訊 -->
+
+    <section class="ia-card detail">
+
+        @if (_selected is null)
+        {
+            <p class="muted small">
+                點選左側「詳細」查看資料修改前後的差異。
+            </p>
+        }
+        else
+        {
+            var kind = StatusStyles.Display(_selected.Kind);
+
+            <div class="detail-head">
+
+                <h2 class="detail-title">
+                    @kind.Label
+                </h2>
+
+                <span class="ia-mono muted">
+                    @_selected.ActionCode・@_selected.Id
+                </span>
+
+            </div>
+
+            <p class="muted small">
+
+                @_selected.Time.ToString("yyyy/MM/dd HH:mm:ss")
+
+                ・@_selected.Actor
+
+                ・病例
+
+                <span class="ia-mono">
+                    @(_selected.CaseId ?? "—")
+                </span>
+
+                ・版本 @_selected.Version
+
+            </p>
+
+            <p class="note">
+                @_selected.Note
+            </p>
+
+            <div>
+
+                <div class="code-label">
+                    BEFORE_JSON
+                </div>
+
+                <pre class="code">@_selected.BeforeJson</pre>
+
+            </div>
+
+            <div>
+
+                <div class="code-label">
+                    AFTER_JSON
+                </div>
+
+                <pre class="code code--after">@_selected.AfterJson</pre>
+
+            </div>
+        }
+
+    </section>
+
+</div>
+
+@code {
+
+    // ========================================
+    // 1. 時間範圍
+    // ========================================
+
+    public enum AuditRange
+    {
+        Last24Hours,
+        Last7Days,
+        All
+    }
+
+
+    // ========================================
+    // 2. 資料集合
+    // ========================================
+
+    private IReadOnlyList<AuditEntry> _entries =
+        Array.Empty<AuditEntry>();
+
+    private AuditEntry? _selected;
+
+
+    // ========================================
+    // 3. 篩選條件
+    // ========================================
+
+    private AuditRange _range =
+        AuditRange.Last24Hours;
+
+    private AuditActorFilter _actor =
+        AuditActorFilter.All;
+
+    private AuditKind? _kind;
+
+    private string _caseKeyword =
+        string.Empty;
+
+
+    // ========================================
+    // 4. 目前使用者
+    // ========================================
+
+    private string UserName =>
+        Auth.CurrentUser?.DisplayName
+        ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+
+
+    // ========================================
+    // 5. 初始化頁面
+    // ========================================
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+    }
+
+
+    // ========================================
+    // 6. 載入稽核紀錄
+    // ========================================
+
+    private async Task LoadAsync()
+    {
+        DateTime? since = _range switch
+        {
+            AuditRange.Last24Hours =>
+                AuditService.Now.AddHours(-24),
+
+            AuditRange.Last7Days =>
+                AuditService.Now.AddDays(-7),
+
+            _ => null
+        };
+
+        var query = new AuditQuery(
+            Since: since,
+            Actor: _actor,
+            CurrentUserName: UserName,
+            Kind: _kind,
+            CaseIdKeyword: _caseKeyword,
+            CaseRelatedOnly: false
+        );
+
+        _entries =
+            await AuditService.GetEntriesAsync(query);
+
+        _selected =
+            _entries.FirstOrDefault(
+                e => e.Id == _selected?.Id
+            )
+            ?? _entries.FirstOrDefault();
+    }
+
+
+    // ========================================
+    // 7. 選擇稽核紀錄
+    // ========================================
+
+    private void SelectEntry(AuditEntry entry)
+    {
+        _selected = entry;
+    }
+
+
+    // ========================================
+    // 8. 時間範圍變更
+    // ========================================
+
+    private async Task OnRangeChangedAsync(
+        ChangeEventArgs e)
+    {
+        if (Enum.TryParse<AuditRange>(
+            e.Value?.ToString(),
+            out var range))
+        {
+            _range = range;
+
+            await LoadAsync();
+        }
+    }
+
+
+    // ========================================
+    // 9. 操作者篩選
+    // ========================================
+
+    private async Task OnActorChangedAsync(
+        ChangeEventArgs e)
+    {
+        if (Enum.TryParse<AuditActorFilter>(
+            e.Value?.ToString(),
+            out var actor))
+        {
+            _actor = actor;
+
+            await LoadAsync();
+        }
+    }
+
+
+    // ========================================
+    // 10. 動作類型篩選
+    // ========================================
+
+    private async Task OnKindChangedAsync(
+        ChangeEventArgs e)
+    {
+        if (Enum.TryParse<AuditKind>(
+            e.Value?.ToString(),
+            out var kind))
+        {
+            _kind = kind;
+        }
+        else
+        {
+            _kind = null;
+        }
+
+        await LoadAsync();
+    }
+
+
+    // ========================================
+    // 11. 病例 ID 搜尋
+    // ========================================
+
+    private async Task OnCaseKeywordChangedAsync(
+        ChangeEventArgs e)
+    {
+        _caseKeyword =
+            e.Value?.ToString()
+            ?? string.Empty;
+
+        await LoadAsync();
+    }
+
+
+    // ========================================
+    // 12. CSV 匯出
+    // ========================================
+
+    private async Task ExportCsvAsync()
+    {
+        static string Cell(string? value)
+        {
+            var safeValue = value ?? string.Empty;
+
+            // 防止試算表將匯出資料誤判為公式
+            if (safeValue.Length > 0 &&
+                "=+-@\t\r\n".Contains(safeValue[0]))
+            {
+                safeValue = "'" + safeValue;
+            }
+
+            return "\"" +
+                   safeValue.Replace("\"", "\"\"") +
+                   "\"";
+        }
+
+        var csv = new StringBuilder();
+
+        // CSV 標題
+        csv.AppendLine(
+            "Id,Time,Actor,Kind,ActionCode,CaseId,Version,Note,BeforeJson,AfterJson"
+        );
+
+        // 寫入稽核資料
+        foreach (var entry in _entries)
+        {
+            csv.AppendLine(
+                string.Join(",",
+
+                    Cell(entry.Id?.ToString()),
+
+                    Cell(
+                        entry.Time.ToString(
+                            "yyyy-MM-dd HH:mm:ss"
+                        )
+                    ),
+
+                    Cell(entry.Actor),
+
+                    Cell(
+                        StatusStyles.Display(
+                            entry.Kind
+                        ).Label
+                    ),
+
+                    Cell(entry.ActionCode),
+
+                    Cell(entry.CaseId),
+
+                    Cell(entry.Version?.ToString()),
+
+                    Cell(entry.Note),
+
+                    Cell(entry.BeforeJson),
+
+                    Cell(entry.AfterJson)
+                )
+            );
+        }
+
+        // UTF-8 BOM
+        var csvContent =
+            "\uFEFF" + csv.ToString();
+
+        // 下載 CSV
+        await Downloader.DownloadTextAsync(
+            $"audit-trail-{DateTime.Now:yyyyMMdd-HHmm}.csv",
+            csvContent,
+            "text/csv;charset=utf-8"
+        );
+
+        // 顯示成功通知
+        Snackbar.Add(
+            $"已匯出 {_entries.Count} 筆稽核軌跡",
+            Severity.Success
+        );
+    }
+
+}

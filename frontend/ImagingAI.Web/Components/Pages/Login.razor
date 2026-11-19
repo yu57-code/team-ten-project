@@ -1,0 +1,292 @@
+@page "/"
+@page "/login"
+@layout EmptyLayout
+@inject IAuthService Auth
+@inject NavigationManager Nav
+@inject ISnackbar Snackbar
+
+<PageTitle>登入｜影像病例結構化平台</PageTitle>
+
+<div class="lf">
+    @* ---------- 上方：品牌標籤、大標題、說明 ---------- *@
+    <header class="lf-hero">
+        <div class="lf-pill">
+            <span class="lf-pill-logo" aria-hidden="true">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                </svg>
+            </span>
+            <span class="lf-pill-text">影像病例 → 結構化 → FHIR</span>
+        </div>
+
+        <h1 class="lf-title">影像病例結構化平台</h1>
+        <p class="lf-desc">病歷經地端 OCR 辨識與去識別化，雲端 AI Agent 擷取欄位後審核驗證，依 TW Core 寫入院內 FHIR Server。</p>
+    </header>
+
+    @* ---------- 置中升級款登入卡片 ---------- *@
+    <section class="lf-card" aria-label="登入">
+        <div class="lf-steps">
+            <div class="@StepClass(1)">
+                <span class="lf-step-num">1</span>
+                <span class="lf-step-label">帳號密碼</span>
+            </div>
+            <span class="lf-steps-line"></span>
+            <div class="@StepClass(2)">
+                <span class="lf-step-num">2</span>
+                <span class="lf-step-label">多因素驗證 (MFA)</span>
+            </div>
+        </div>
+
+        @if (_step == 1)
+        {
+            <div class="lf-body">
+                <div class="lf-heading">
+                    <h2>單一入口登入</h2>
+                    <p>審核人員與系統管理人員使用同一入口，登入後依權限角色導向對應工作台。</p>
+                </div>
+
+                <div class="lf-field">
+                    <label class="lf-label" for="acc">帳號</label>
+                    <div class="lf-input">
+                        <MudIcon Icon="@Icons.Material.Outlined.PersonOutline" Class="lf-input-icon" />
+                        <input id="acc" type="text" placeholder="例如 dr.chen" autocomplete="username"
+                               @bind="_username" @bind:event="oninput" />
+                    </div>
+                </div>
+
+                <div class="lf-field">
+                    <div class="lf-label-row">
+                        <label class="lf-label" for="pwd">密碼</label>
+                        <button type="button" class="lf-link" @onclick="ShowForgotPassword">忘記密碼？</button>
+                    </div>
+                    <div class="lf-input">
+                        <MudIcon Icon="@Icons.Material.Outlined.Lock" Class="lf-input-icon" />
+                        <input id="pwd" type="@(_showPassword ? "text" : "password")" placeholder="請輸入密碼"
+                               autocomplete="current-password" class="has-action"
+                               @bind="_password" @bind:event="oninput" @onkeydown="OnPasswordKeyDown" />
+                        <button type="button" class="lf-eye" aria-label="@(_showPassword ? "隱藏密碼" : "顯示密碼")"
+                                @onclick="() => _showPassword = !_showPassword">
+                            <MudIcon Icon="@(_showPassword ? Icons.Material.Outlined.VisibilityOff : Icons.Material.Outlined.Visibility)" />
+                        </button>
+                    </div>
+                </div>
+
+                @if (_error is not null)
+                {
+                    <p class="lf-error" role="alert">@_error</p>
+                }
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
+                           Class="lf-submit" Disabled="_busy" OnClick="SubmitCredentialsAsync"
+                           EndIcon="@Icons.Material.Filled.ArrowForward">
+                    下一步
+                </MudButton>
+            </div>
+        }
+        else if (_step == 2)
+        {
+            <div class="lf-body">
+                <div class="lf-heading">
+                    <h2>輸入驗證碼</h2>
+                    <p>MFA 驗證服務已發送 6 位數驗證碼至您綁定的驗證器 App。</p>
+                </div>
+
+                <div class="lf-otp-row">
+                    @for (var i = 0; i < OtpLength; i++)
+                    {
+                        var index = i;
+                        <input class="lf-otp" aria-label="驗證碼第 @(index + 1) 碼" inputmode="numeric" maxlength="1"
+                               placeholder="·" autocomplete="one-time-code"
+                               value="@_otp[index]"
+                               @ref="_otpRefs[index]"
+                               @oninput="e => OnOtpInputAsync(index, e)"
+                               @onkeydown="e => OnOtpKeyDownAsync(index, e)" />
+                    }
+                </div>
+
+                @if (_error is not null)
+                {
+                    <p class="lf-error" role="alert">@_error</p>
+                }
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
+                           Class="lf-submit" Disabled="_busy" OnClick="SubmitOtpAsync"
+                           EndIcon="@Icons.Material.Filled.ArrowForward">
+                    驗證並登入
+                </MudButton>
+
+                <div class="lf-row">
+                    <button type="button" class="lf-link" @onclick="BackToStep1">← 返回</button>
+                    <span class="lf-muted">60 秒後可重新發送</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="lf-body lf-body--tight">
+                <div class="lf-ok">
+                    <MudIcon Icon="@Icons.Material.Outlined.CheckCircle" />
+                    驗證成功
+                </div>
+                <p class="lf-muted lf-muted--lg">系統將依帳號角色導向對應工作台（原型中可直接選擇）：</p>
+
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
+                           Class="lf-submit" OnClick="() => EnterAsync(UserRole.Reviewer)">
+                    醫療／資料審核人員
+                </MudButton>
+                <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
+                           Class="lf-submit lf-submit--outline" OnClick="() => EnterAsync(UserRole.Admin)">
+                    系統管理／維護人員
+                </MudButton>
+            </div>
+        }
+
+        <footer class="lf-footer">
+            <span>此系統處理敏感醫療資料</span>
+            <button type="button" class="lf-link lf-link--underline" @onclick="ShowContactAdmin">疑難請聯絡系統管理人員</button>
+        </footer>
+    </section>
+
+    @* ---------- 下方可展開：系統處理架構與安全機制 ---------- *@
+    <section class="lf-flow">
+        <button type="button" class="lf-flow-toggle" aria-expanded="@(_showFlow ? "true" : "false")" aria-controls="lf-flow-body"
+                @onclick="() => _showFlow = !_showFlow">
+            <MudIcon Icon="@Icons.Material.Outlined.AccountTree" Class="lf-flow-icon" />
+            <span>系統處理架構與安全機制 (點擊檢視 5 階段流程)</span>
+            <MudIcon Icon="@(_showFlow ? Icons.Material.Filled.ExpandLess : Icons.Material.Filled.ExpandMore)" Class="lf-flow-chevron" />
+        </button>
+
+        @if (_showFlow)
+        {
+            <div id="lf-flow-body" class="lf-flow-body">
+                <ol class="lf-flow-steps">
+                    @for (var i = 0; i < FlowSteps.Length; i++)
+                    {
+                        <li>
+                            <span class="lf-flow-num">@(i + 1)</span>
+                            <div>
+                                <div class="lf-flow-title">@FlowSteps[i].Title</div>
+                                <div class="lf-flow-desc">@FlowSteps[i].Desc</div>
+                            </div>
+                        </li>
+                    }
+                </ol>
+                <p class="lf-flow-note">
+                    <MudIcon Icon="@Icons.Material.Outlined.Shield" Class="lf-flow-note-icon" />
+                    病人可識別資料不離開院內網路；僅去識別化文字傳送至雲端。
+                </p>
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private const int OtpLength = 6;
+
+    private static readonly (string Title, string Desc)[] FlowSteps =
+    [
+        ("上傳與 SHA-256 重複檢查", "建立 BatchID / CaseID；重複檔案直接回傳既有結果，不重複解析。"),
+        ("地端 OCR 與去識別化", "PaddleOCR／Qwen2.5-VL 辨識文字，Presidio 遮蔽個資，全程在院內完成。"),
+        ("個資安全檢查", "確認遮蔽完整、OCR 品質與資料完整性符合條件，才允許傳送至雲端。"),
+        ("雲端 AI Agent 解析與自動驗證", "擷取結構化欄位並附信心值，檢查必要欄位、數值合理性與信心值門檻。"),
+        ("人工覆核與 FHIR 寫入", "確認重要結果後依 TW Core 轉換驗證，寫入院內 FHIR Server 並產生稽核軌跡。"),
+    ];
+
+    private int _step = 1;
+    private bool _busy;
+    private bool _showPassword;
+    private bool _showFlow;
+    private string? _error;
+
+    private string _username = string.Empty;
+    private string _password = string.Empty;
+
+    private readonly string[] _otp = new string[OtpLength];
+    private readonly ElementReference[] _otpRefs = new ElementReference[OtpLength];
+
+    private string StepClass(int step) => _step >= step ? "lf-step is-on" : "lf-step";
+
+    private async Task SubmitCredentialsAsync()
+    {
+        _busy = true;
+        _error = null;
+
+        var result = await Auth.ValidateCredentialsAsync(_username, _password);
+
+        _busy = false;
+        if (!result.Succeeded)
+        {
+            _error = result.Error;
+            return;
+        }
+
+        Array.Fill(_otp, string.Empty);
+        _step = 2;
+    }
+
+    private async Task OnPasswordKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            await SubmitCredentialsAsync();
+        }
+    }
+
+    private async Task OnOtpInputAsync(int index, ChangeEventArgs e)
+    {
+        var digits = new string((e.Value?.ToString() ?? string.Empty).Where(char.IsDigit).ToArray());
+        _otp[index] = digits.Length > 0 ? digits[^1].ToString() : string.Empty;
+
+        if (_otp[index].Length == 1 && index < OtpLength - 1)
+        {
+            await _otpRefs[index + 1].FocusAsync();
+        }
+    }
+
+    private async Task OnOtpKeyDownAsync(int index, KeyboardEventArgs e)
+    {
+        if (e.Key == "Backspace" && string.IsNullOrEmpty(_otp[index]) && index > 0)
+        {
+            await _otpRefs[index - 1].FocusAsync();
+        }
+        else if (e.Key == "Enter")
+        {
+            await SubmitOtpAsync();
+        }
+    }
+
+    private async Task SubmitOtpAsync()
+    {
+        _busy = true;
+        _error = null;
+
+        var result = await Auth.VerifyMfaAsync(string.Concat(_otp));
+
+        _busy = false;
+        if (!result.Succeeded)
+        {
+            _error = result.Error;
+            return;
+        }
+
+        _step = 3;
+    }
+
+    private void BackToStep1()
+    {
+        _error = null;
+        _step = 1;
+    }
+
+    private void ShowForgotPassword() =>
+        Snackbar.Add("請聯絡系統管理人員重設密碼。", Severity.Info);
+
+    private void ShowContactAdmin() =>
+        Snackbar.Add("系統管理人員：admin.huang（分機 1234）", Severity.Info);
+
+    private async Task EnterAsync(UserRole role)
+    {
+        await Auth.CompleteSignInAsync(role);
+        Nav.NavigateTo(role == UserRole.Reviewer ? "/reviewer" : "/admin");
+    }
+}

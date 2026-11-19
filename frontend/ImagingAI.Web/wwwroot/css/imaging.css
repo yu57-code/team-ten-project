@@ -1,0 +1,447 @@
+/* =========================================================================
+   影像病例結構化平台 — 共用主題與元件樣式
+   色票、字級、圓角皆取自已確認的設計稿。
+   - .ia-shell--reviewer：醫療／資料審核人員（深藍）
+   - .ia-shell--admin   ：系統管理／維護人員（深灰＋藍綠）
+   頁面專屬的樣式放在各頁的 .razor.css（CSS isolation）。
+   ========================================================================= */
+
+:root {
+    --ia-font: 'Noto Sans TC', system-ui, -apple-system, 'Segoe UI', 'Microsoft JhengHei', sans-serif;
+    --ia-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    /* 統一側邊欄寬度變數：加寬至 320px */
+    --ia-side-width: 320px;
+
+    /* 文字 */
+    --ia-text: #16202E;
+    --ia-text-2: #3A4556;
+    --ia-muted: #5A6577;
+    --ia-faint: #8A94A6;
+
+    /* 線條與底色 */
+    --ia-border: #E2E6EC;
+    --ia-border-soft: #EDF0F4;
+    --ia-field-border: #CBD2DC;
+    --ia-surface: #FFFFFF;
+    --ia-surface-2: #F8F9FB;
+    --ia-bg: #F4F6F9;
+
+    /* 主色（預設為審核人員，管理員版面會覆寫） */
+    --ia-accent: #1E3A8A;
+    --ia-accent-dark: #14244D;
+    --ia-link: #1E40AF;
+    --ia-link-hover: #1E3A8A;
+    --ia-selected-row: #F1F5FC;
+
+    /* 狀態色（徽章底色／文字） */
+    --ia-ok-bg: #E3F4EA;   --ia-ok: #14653A;
+    --ia-warn-bg: #FDF1D8; --ia-warn: #8A4B00;
+    --ia-err-bg: #FDE7E7;  --ia-err: #A61B1B;
+    --ia-info-bg: #E4ECFB; --ia-info: #1E40AF;
+    --ia-man-bg: #EFE8FB;  --ia-man: #5B2BB5;
+    --ia-mute-bg: #ECEEF2; --ia-mute: #4A5568;
+    --ia-adm-bg: #DDF3F0;  --ia-adm: #0F5F59;
+}
+
+/* ---------- 兩種角色的色票 ---------- */
+.ia-shell--reviewer {
+    --ia-bg: #F4F6F9;
+    --ia-accent: #1E3A8A;
+    --ia-accent-dark: #14244D;
+    --ia-link: #1E40AF;
+    --ia-link-hover: #1E3A8A;
+    --ia-selected-row: #F1F5FC;
+    --ia-side-bg: #14244D;
+    --ia-side-text: #C9D3E6;
+    --ia-side-sub: #9FB3DA;
+    --ia-side-line: #2B3D6B;
+    --ia-side-active: #14244D;
+    --ia-brand-bg: #FFFFFF;
+    --ia-brand-fg: #14244D;
+    --ia-avatar: #3B5BA9;
+}
+
+.ia-shell--admin {
+    --ia-bg: #F3F5F5;
+    --ia-border: #E1E6E8;
+    --ia-border-soft: #EDF0F2;
+    --ia-field-border: #C8D0D4;
+    --ia-surface-2: #F7F9F9;
+    --ia-accent: #0F766E;
+    --ia-accent-dark: #0F3D3A;
+    --ia-link: #0F5F59;
+    --ia-link-hover: #0B4743;
+    --ia-selected-row: #EEF8F6;
+    --ia-side-bg: #1B2430;
+    --ia-side-text: #C5CED6;
+    --ia-side-sub: #9DB0BC;
+    --ia-side-line: #2E3A48;
+    --ia-side-active: #0F3D3A;
+    --ia-brand-bg: #2DD4BF;
+    --ia-brand-fg: #0F3D3A;
+    --ia-avatar: #0F766E;
+}
+
+/* ---------- 版面骨架：側欄＋內容 ---------- */
+.ia-shell {
+    min-height: 100vh;
+    width: 100%;
+    display: flex;
+    flex-wrap: nowrap; /* 保持左右並排不折行 */
+    background: var(--ia-bg);
+    color: var(--ia-text);
+    font-family: var(--ia-font);
+}
+
+.ia-shell a {
+    color: var(--ia-link);
+}
+
+.ia-shell a:hover {
+    color: var(--ia-link-hover);
+}
+
+/* 右側主內容區自適應填滿剩餘寬度 */
+.ia-main {
+    flex: 1;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 32px 40px 48px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+/* ---------- 頁首 (放大層級) ---------- */
+.ia-page-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.ia-page-heading {
+    min-width: 0;
+}
+
+.ia-page-title-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.mud-typography.ia-page-title {
+    margin: 0;
+    font-size: 28px; /* 26px -> 28px */
+    font-weight: 800;
+    line-height: 1.35;
+    letter-spacing: -.01em;
+    color: var(--ia-text);
+}
+
+.ia-page-sub {
+    margin: 6px 0 0;
+    font-size: 15px; /* 14px -> 15px */
+    color: var(--ia-muted);
+}
+
+.ia-crumb {
+    margin-bottom: 6px;
+    font-size: 13.5px;
+    color: var(--ia-muted);
+}
+
+.ia-page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+/* ---------- 卡片 ---------- */
+.ia-card,
+.mud-paper.ia-card {
+    background: var(--ia-surface);
+    border: 1px solid var(--ia-border);
+    border-radius: 14px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.ia-card-title {
+    margin: 0;
+    font-size: 18px; /* 17px -> 18px */
+    font-weight: 700;
+}
+
+.ia-card-sub {
+    margin: 4px 0 0;
+    font-size: 13.5px;
+    color: var(--ia-muted);
+}
+
+/* 統計卡片（數字 KPI 放大） */
+.ia-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 18px;
+}
+
+.ia-stat {
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    color: var(--ia-text);
+    text-decoration: none;
+    transition: all .15s ease-in-out;
+}
+
+a.ia-stat:hover {
+    border-color: var(--ia-field-border);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    color: var(--ia-text);
+}
+
+.ia-stat-label {
+    font-size: 14px; /* 13px -> 14px */
+    font-weight: 500;
+    color: var(--ia-muted);
+}
+
+.ia-stat-value {
+    font-size: 32px; /* 30px -> 32px */
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+.ia-stat-note {
+    font-size: 13px;
+    color: var(--ia-muted);
+}
+
+/* ---------- 狀態徽章 ---------- */
+.ia-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 12px; /* 面積微幅加大 */
+    border-radius: 999px;
+    font-size: 13px; /* 12px -> 13px */
+    font-weight: 600;
+    line-height: 20px;
+    white-space: nowrap;
+}
+
+.ia-badge--ok   { background: var(--ia-ok-bg);   color: var(--ia-ok); }
+.ia-badge--warn { background: var(--ia-warn-bg); color: var(--ia-warn); }
+.ia-badge--err  { background: var(--ia-err-bg);  color: var(--ia-err); }
+.ia-badge--info { background: var(--ia-info-bg); color: var(--ia-info); }
+.ia-badge--man  { background: var(--ia-man-bg);  color: var(--ia-man); }
+.ia-badge--mute { background: var(--ia-mute-bg); color: var(--ia-mute); }
+.ia-badge--adm  { background: var(--ia-adm-bg);  color: var(--ia-adm); }
+
+/* ---------- 篩選標籤 ---------- */
+.ia-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.ia-chip {
+    min-height: 38px; /* 36px -> 38px */
+    padding: 0 16px;
+    border-radius: 999px;
+    border: 1px solid var(--ia-field-border);
+    background: #FFFFFF;
+    color: var(--ia-text-2);
+    font-family: inherit;
+    font-size: 14px; /* 13px -> 14px */
+    font-weight: 600;
+    cursor: pointer;
+    transition: all .15s;
+}
+
+.ia-chip:hover {
+    border-color: #14244D;
+}
+
+.ia-chip.is-on {
+    background: #14244D;
+    border-color: #14244D;
+    color: #FFFFFF;
+}
+
+/* ---------- 表格 ---------- */
+.ia-table-wrap {
+    overflow-x: auto;
+}
+
+.ia-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14.5px; /* 14px -> 14.5px */
+}
+
+.ia-table th {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--ia-border);
+    background: var(--ia-surface-2);
+    color: var(--ia-mute);
+    font-size: 13px; /* 12px -> 13px */
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+}
+
+.ia-table td {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--ia-border-soft);
+    white-space: nowrap;
+    vertical-align: middle;
+}
+
+.ia-table tr.is-selected td {
+    background: var(--ia-selected-row);
+}
+
+.ia-table td.is-wrap {
+    white-space: normal;
+}
+
+.ia-mono {
+    font-family: var(--ia-mono);
+    font-size: 13.5px;
+}
+
+/* ---------- 表單欄位 ---------- */
+.ia-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px; /* 13px -> 14px */
+    font-weight: 600;
+    color: var(--ia-text-2);
+}
+
+.ia-field {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px; /* 40px -> 44px */
+    padding: 10px 14px;
+    border: 1.5px solid var(--ia-field-border);
+    border-radius: 10px;
+    background: #FFFFFF;
+    color: var(--ia-text);
+    font-family: inherit;
+    font-size: 15px; /* 14px -> 15px */
+    transition: all .15s;
+}
+
+.ia-field:focus {
+    outline: none;
+    border-color: var(--ia-accent);
+    box-shadow: 0 0 0 3px rgba(30, 58, 138, 0.15);
+}
+
+.ia-field::placeholder {
+    color: var(--ia-faint);
+}
+
+.ia-field--lg {
+    min-height: 50px;
+    padding: 12px 16px;
+    font-size: 16px;
+}
+
+/* 信心值低於門檻的欄位 */
+.ia-field--low {
+    border-color: #E0A33A;
+    background: #FFFBF2;
+}
+
+.ia-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+
+/* ---------- MudButton 覆寫 ---------- */
+.mud-button-root.ia-btn {
+    min-height: 44px; /* 40px -> 44px */
+    padding: 0 18px;
+    border-radius: 10px;
+    box-shadow: none;
+    font-family: var(--ia-font);
+    font-size: 15px; /* 14px -> 15px */
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: none;
+}
+
+.mud-button-root.ia-btn--lg {
+    min-height: 50px;
+    font-size: 16.5px;
+    font-weight: 700;
+}
+
+.mud-button-root.ia-btn--sm {
+    min-height: 38px;
+    padding: 0 14px;
+    font-size: 13.5px;
+}
+
+.mud-button-root.ia-btn.mud-button-outlined {
+    background: #FFFFFF;
+}
+
+.mud-button-root.ia-btn.mud-button-outlined-default {
+    border-color: var(--ia-field-border);
+    color: var(--ia-text);
+}
+
+.mud-button-root.ia-btn--white.mud-button-outlined-primary:hover {
+    background: #EEF2FA;
+}
+
+.mud-button-root.ia-btn--danger.mud-button-outlined {
+    border-color: #F0B4B4;
+    color: var(--ia-err);
+}
+
+/* ---------- 提示／未完成內容卡片 ---------- */
+.ia-coming {
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    padding: 24px 28px;
+}
+
+.ia-coming-icon {
+    color: var(--ia-accent);
+}
+
+.ia-coming-title {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.ia-coming-text {
+    margin: 6px 0 0;
+    font-size: 14.5px;
+    color: var(--ia-muted);
+    line-height: 1.6;
+}
+
+@media (max-width: 768px) {
+    .ia-shell {
+        flex-wrap: wrap;
+    }
+    .ia-main {
+        padding: 24px 16px 40px;
+    }
+}

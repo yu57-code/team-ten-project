@@ -1,0 +1,208 @@
+@page "/admin"
+@implements IDisposable
+@inject ISystemMonitorService Monitor
+@inject IUploadService UploadService
+@inject IAuthService Auth
+@inject ISnackbar Snackbar
+
+<PageTitle>系統監控｜影像病例結構化平台</PageTitle>
+
+<PageHeader Title="系統監控"
+            Subtitle="服務健康狀態、處理佇列與失敗任務（ProcessingLog）。資料內容異常由審核人員於異常佇列處理。">
+    <Actions>
+        <span class="updated">最後更新 @_updatedAt.ToString("HH:mm:ss")・每 30 秒自動更新</span>
+    </Actions>
+</PageHeader>
+
+@if (_stats is not null)
+{
+    <section class="ia-stats">
+        <StatCard Label="今日處理病例" Value="@_stats.TodayCases.ToString()"
+                  Note="@($"完成 {_stats.TodayCompleted}・處理中 {_stats.TodayProcessing}・異常 {_stats.TodayExceptions}")" />
+        <StatCard Label="失敗任務" Value="@_stats.FailedTasks.ToString()" ValueColor="#B91C1C" Note="可重新執行" />
+        <StatCard Label="平均處理時間" Value="@AverageText" Note="上傳至待人工審核" />
+        <StatCard Label="SHA-256 重複命中" Value="@_stats.DuplicateHits.ToString()" ValueColor="#0F766E"
+                  Note="直接回傳既有結果，未重複解析" />
+    </section>
+}
+
+@* ---------- 服務狀態 ---------- *@
+<section class="ia-card services">
+    <div class="section-head">
+        <h2 class="ia-card-title">服務狀態</h2>
+        <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" StartIcon="@Icons.Material.Outlined.Refresh"
+                   Disabled="_checking" OnClick="CheckServicesAsync">
+            @(_checking ? "檢查中…" : "重新檢查")
+        </MudButton>
+    </div>
+    <div class="service-grid">
+        @foreach (var service in _services)
+        {
+            var status = StatusStyles.Display(service.Status);
+            <div class="service">
+                <div class="service-top">
+                    <span class="service-name">@service.Name</span>
+                    <StatusBadge Tone="status.Tone" Text="@status.Label" />
+                </div>
+                <span class="service-desc">@service.Description</span>
+                <span class="service-metric">@service.Metric</span>
+                @if (service.CheckedAt is { } checkedAt)
+                {
+                    <span class="service-time">檢查於 @checkedAt.ToString("HH:mm:ss")</span>
+                }
+            </div>
+        }
+    </div>
+</section>
+
+@* ---------- 失敗任務 ---------- *@
+<section class="ia-card tasks">
+    <div class="section-head">
+        <div>
+            <h2 class="ia-card-title">失敗任務</h2>
+            <p class="ia-card-sub">系統錯誤造成的中斷（逾時、服務無回應、轉檔失敗），重新執行會從失敗階段接續。</p>
+        </div>
+        <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" Class="ia-btn"
+                   Disabled="@(SelectedCount == 0 || _busy)" OnClick="RetrySelectedAsync">
+            重新執行已選取（@SelectedCount）
+        </MudButton>
+    </div>
+    <div class="ia-table-wrap">
+        <table class="ia-table">
+            <thead>
+                <tr>
+                    <th><span class="ia-sr-only">選取</span></th>
+                    <th>Log ID</th>
+                    <th>病例</th>
+                    <th>失敗階段</th>
+                    <th>錯誤訊息</th>
+                    <th>模型版本</th>
+                    <th>開始時間</th>
+                    <th>狀態</th>
+                    <th><span class="ia-sr-only">操作</span></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var task in _tasks)
+                {
+                    var failed = task.State == FailedTaskState.Failed;
+                    <tr>
+                        <td>
+                            <MudCheckBox T="bool" Value="_selected.Contains(task.LogId)" Disabled="!failed" Color="Color.Primary" Dense="true"
+                                         ValueChanged="@((bool v) => ToggleSelected(task.LogId, v))" aria-label="@($"選取 {task.LogId}")" />
+                        </td>
+                        <td class="ia-mono">@task.LogId</td>
+                        <td class="ia-mono">@task.CaseId</td>
+                        <td>@task.Stage</td>
+                        <td class="is-wrap error">@task.ErrorMessage</td>
+                        <td class="ia-mono">@task.ModelVersion</td>
+                        <td class="muted">@task.StartedAt.ToString("MM/dd HH:mm")</td>
+                        <td><StatusBadge Tone="@(failed ? BadgeTone.Err : BadgeTone.Info)" Text="@(failed ? "失敗" : "已重新排入佇列")" /></td>
+                        <td>
+                            <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm" Disabled="@(!failed || _busy)"
+                                       OnClick="() => RetryAsync([task.LogId])">
+                                重新執行
+                            </MudButton>
+                        </td>
+                    </tr>
+                }
+                @if (_tasks.Count == 0)
+                {
+                    <tr><td colspan="9" class="empty">目前沒有失敗任務</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</section>
+
+@code {
+    private MonitorStats? _stats;
+    private IReadOnlyList<ServiceHealth> _services = [];
+    private IReadOnlyList<FailedTask> _tasks = [];
+    private readonly HashSet<string> _selected = [];
+    private DateTime _updatedAt = DateTime.Now;
+    private bool _checking;
+    private bool _busy;
+    private System.Threading.Timer? _timer;
+
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+
+    private int SelectedCount => _selected.Count;
+
+    private string AverageText => _stats?.AverageProcessingTime is { } t
+        ? (t.TotalMinutes >= 1 ? $"{(int)t.TotalMinutes} 分 {t.Seconds} 秒" : $"{t.TotalSeconds:0} 秒")
+        : "—";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        UploadService.JobChanged += OnJobChanged;
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender)
+        {
+            // 每 30 秒自動更新
+            _timer = new System.Threading.Timer(_ => _ = InvokeAsync(async () =>
+            {
+                await LoadAsync();
+                StateHasChanged();
+            }), null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }
+    }
+
+    private async Task LoadAsync()
+    {
+        _stats = await Monitor.GetStatsAsync();
+        _services = await Monitor.GetServicesAsync();
+        _tasks = await Monitor.GetFailedTasksAsync();
+        _selected.RemoveWhere(id => _tasks.All(t => t.LogId != id || t.State != FailedTaskState.Failed));
+        _updatedAt = DateTime.Now;
+    }
+
+    private async Task CheckServicesAsync()
+    {
+        _checking = true;
+        _services = await Monitor.CheckServicesAsync();
+        _checking = false;
+        _updatedAt = DateTime.Now;
+    }
+
+    private void ToggleSelected(string logId, bool selected)
+    {
+        if (selected)
+        {
+            _selected.Add(logId);
+        }
+        else
+        {
+            _selected.Remove(logId);
+        }
+    }
+
+    private Task RetrySelectedAsync() => RetryAsync(_selected.ToList());
+
+    private async Task RetryAsync(IReadOnlyCollection<string> logIds)
+    {
+        _busy = true;
+        var result = await Monitor.RetryTasksAsync(logIds, UserName);
+        _busy = false;
+
+        Snackbar.Add(result.Message, result.Succeeded ? Severity.Success : Severity.Warning);
+        _selected.Clear();
+        await LoadAsync();
+    }
+
+    private void OnJobChanged(UploadJob job) => _ = InvokeAsync(async () =>
+    {
+        _stats = await Monitor.GetStatsAsync();
+        StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        _timer?.Dispose();
+        UploadService.JobChanged -= OnJobChanged;
+    }
+}
