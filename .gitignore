@@ -1,3 +1,4 @@
+
 # ==========================================
 # 1. .NET / C# (Backend & Blazor)
 # ==========================================
@@ -66,13 +67,16 @@ htmlcov/
 # 3. AI Models / OCR Cache
 # ==========================================
 
-# Model cache
+# PaddleOCR / PaddleX model cache
 .paddlex/
 .paddleocr/
 .cache/
-models/
 
-# Large model files
+# IMPORTANT:
+# Do not ignore all models/ directories.
+# ASP.NET Core Models/ contains C# source code.
+
+# Ignore AI model weights and large model files
 *.onnx
 *.pdmodel
 *.pdiparams
@@ -147,7 +151,7 @@ test_images/
 .paddleocr/
 .paddlenlp/
 inference/
-models/
+/models/
 *.onnx
 *.pdparams
 *.pdopt
@@ -176,6 +180,11 @@ debug/
 *.dump
 *.backup
 
+# Keep database schema and SQL scripts
+# database/schema/
+# database/seed/
+# database/table/
+
 # ==========================================
 # 8. Temporary Files
 # ==========================================
@@ -196,3 +205,15 @@ ocr-output/
 
 # Private uploaded medical files
 **/PrivateUploads/
+
+# ==========================================
+# 10. Additional Sensitive Data
+# ==========================================
+
+# Local certificates and credentials
+*.pfx
+*.p12
+*.credentials.json
+
+# Local application secrets
+appsettings.*.Secret.json

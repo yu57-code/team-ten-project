@@ -13,4 +13,9 @@ public interface IExceptionService
 
     /// <summary>標記為無法處理並結案（不寫入 FHIR）。</summary>
     Task<OperationResult> MarkUnresolvableAsync(string exceptionId, string note, string actor);
+
+    /// <summary>人工修正後，執行重新驗證。</summary>
+    Task<OperationResult> RevalidateAsync(
+    string exceptionId,
+    string actor);
 }
