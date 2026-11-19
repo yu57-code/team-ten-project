@@ -6,7 +6,7 @@
 
 <PageTitle>上傳病例｜影像病例結構化平台</PageTitle>
 
-<PageHeader Title="上傳病例" Subtitle="支援 PDF、JPG、PNG 心導管檢查報告。上傳後系統自動建立處理任務，可在右側即時查看處理進度。" />
+<PageHeader Title="上傳病例" Subtitle="支援 PDF、JPG、PNG 醫療檢查報告。上傳後系統自動建立處理任務，可在右側即時查看處理進度。" />
 
 <div class="layout">
     <section class="left">
@@ -18,7 +18,7 @@
                  @ondrop="() => _dragOver = false">
                 <MudIcon Icon="@Icons.Material.Outlined.FileUpload" Class="drop-icon" />
                 <span class="drop-title">拖放 PDF／圖片到此處</span>
-                <span class="drop-sub">可一次上傳多份，每份建立一筆 CaseID（單檔上限 10 MB）</span>
+                <span class="drop-sub">可一次上傳多份，每份建立一筆 CaseID（單檔上限 20 MB）</span>
                 <span class="drop-btn" aria-hidden="true">選擇檔案</span>
                 <InputFile OnChange="OnFilesSelected" multiple class="drop-input" aria-label="選擇要上傳的病例檔案"
                            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" />
@@ -51,6 +51,9 @@
                     <select id="report-type" class="ia-field" @bind="_reportType">
                         <option value="自動辨識">自動辨識</option>
                         <option value="心導管檢查報告">心導管檢查報告</option>
+                        <option value="心臟超音波報告">心臟超音波報告</option>
+                        <option value="電腦斷層（CT）檢查報告">電腦斷層（CT）檢查報告</option>
+                        <option value="胸部 X 光檢查報告">胸部 X 光檢查報告</option>
                     </select>
                 </div>
             </div>
@@ -86,7 +89,13 @@
                             <StatusBadge Tone="BadgeTone.Man" Text="已進入待覆核" />
                             break;
                         case UploadJobState.Duplicate:
-                            <StatusBadge Tone="BadgeTone.Mute" Text="重複病例" />
+                            <div class="d-flex align-center gap-1 flex-wrap">
+                                <StatusBadge Tone="BadgeTone.Mute" Text="重複病例" />
+                                @if (!string.IsNullOrWhiteSpace(job.DuplicateReportType))
+                                {
+                                    <StatusBadge Tone="BadgeTone.Info" Text="@job.DuplicateReportType" />
+                                }
+                            </div>
                             break;
                         default:
                             <StatusBadge Tone="BadgeTone.Err" Text="失敗" />
@@ -126,7 +135,12 @@
             else if (_tracked.State == UploadJobState.Duplicate)
             {
                 <div class="dup-banner">
-                    SHA-256 已存在，已直接回傳 <span class="ia-mono">@_tracked.DuplicateOf</span> 的病例結果，不重複解析。
+                    SHA-256 已存在，已直接回傳 <span class="ia-mono">@_tracked.DuplicateOf</span> 的病例結果
+                    @if (!string.IsNullOrWhiteSpace(_tracked.DuplicateReportType))
+                    {
+                        <span>（先前分析類型：<strong>@_tracked.DuplicateReportType</strong>）</span>
+                    }
+                    ，不重複解析。
                 </div>
             }
         }
@@ -135,7 +149,7 @@
 </div>
 
 @code {
-    private const long MaxFileSize = 10 * 1024 * 1024;
+    private const long MaxFileSize = 20L * 1024 * 1024;
     private const int MaxFileCount = 10;
     private static readonly string[] AllowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
 
@@ -168,7 +182,6 @@
     {
         _dragOver = false;
 
-        // GetMultipleFiles 超過上限會丟例外，所以先放寬，再由下面自己檢查數量
         foreach (var file in e.GetMultipleFiles(maximumFileCount: 100))
         {
             var extension = Path.GetExtension(file.Name).ToLowerInvariant();
@@ -180,7 +193,7 @@
 
             if (file.Size == 0 || file.Size > MaxFileSize)
             {
-                Snackbar.Add($"{file.Name}：檔案必須大於 0 且不超過 10 MB", Severity.Error);
+                Snackbar.Add($"{file.Name}：檔案必須大於 0 且不超過 20 MB", Severity.Error);
                 continue;
             }
 
@@ -198,10 +211,8 @@
             var contentType = string.IsNullOrEmpty(file.ContentType)
                 ? (extension == ".pdf" ? "application/pdf" : "image/" + extension.TrimStart('.'))
                 : file.ContentType;
-            _selectedFiles.Add(new UploadFile(file.Name,file.Size,contentType,file
-    )
-);
 
+            _selectedFiles.Add(new UploadFile(file.Name, file.Size, contentType, file));
         }
     }
 

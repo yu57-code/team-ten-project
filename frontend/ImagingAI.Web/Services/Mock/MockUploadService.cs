@@ -45,6 +45,10 @@ public sealed class MockUploadService(MockDataStore store) : IUploadService
 
                 if (store.FileHashIndex.TryGetValue(file.FileName, out var existing))
                 {
+                    // 找出原先已上傳分析的案件，取得它的病例／報告類型
+                    var existingCase = store.Cases.FirstOrDefault(c => c.CaseId == existing);
+                    var existingReportType = existingCase?.ReportType;
+
                     // SHA-256 已存在：直接回傳既有病例結果，不重複解析
                     var duplicate = new UploadJob
                     {
@@ -55,6 +59,7 @@ public sealed class MockUploadService(MockDataStore store) : IUploadService
                         State = UploadJobState.Duplicate,
                         StageIndex = 1,
                         DuplicateOf = existing,
+                        DuplicateReportType = existingReportType,
                         CreatedAt = now,
                         FinishedAt = now,
                     };
@@ -66,6 +71,7 @@ public sealed class MockUploadService(MockDataStore store) : IUploadService
                         UploadedAt = now,
                         FileName = file.FileName,
                         UploadedBy = request.UploadedBy,
+                        ReportType = existingReportType ?? string.Empty,
                         Status = CaseStatus.Duplicate,
                         StatusLabel = "重複病例",
                         StageIndex = 0,
@@ -73,8 +79,8 @@ public sealed class MockUploadService(MockDataStore store) : IUploadService
                         DuplicateOf = existing,
                     });
                     store.AddAudit(request.UploadedBy, AuditKind.Upload, "UPLOAD", caseId, "—",
-                        $"SHA-256 已存在（與 {existing} 相同），直接回傳既有結果，未重複解析。",
-                        new { }, new { duplicate_of = existing });
+                        $"SHA-256 已存在（與 {existing} 相同，類型：{existingReportType ?? "未知"}），直接回傳既有結果，未重複解析。",
+                        new { }, new { duplicate_of = existing, report_type = existingReportType });
                     store.AddHistory(request.UploadedBy, HistoryAction.Upload, caseId,
                         $"上傳 {file.FileName}（與 {existing} 重複）", HistoryCaseState.Duplicate);
                     created.Add(duplicate);

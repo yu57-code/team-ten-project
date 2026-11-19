@@ -535,3 +535,13 @@
         padding: 18px 24px 16px;
     }
 }
+/* =========================================================================
+   3. 登入頁面（.lf）：解除高度鎖死，允許展開 5 階段流程後順暢向下捲動
+   ========================================================================= */
+.lf {
+    min-height: 100vh !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    padding-bottom: 56px !important; /* 底部預留安全距離，滑到底時才不會貼死視窗邊緣 */
+}
