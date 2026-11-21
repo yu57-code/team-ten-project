@@ -2,11 +2,24 @@
 using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using ImagingAI.Api.Data;
+using Microsoft.AspNetCore.DataProtection;
 using System.Text.Json.Serialization;
 using ImagingAI.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-
+builder.Services.AddDataProtection();
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Ocr:Enabled"))
+{
+    builder.Services.AddSingleton<IExtractedFieldsStore, PrivateJsonFieldsStore>();
+    builder.Services.AddHostedService<PdfOcrWorker>();
+}
+builder.Services.AddDbContext<ImagingAiDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection")
+    )
+);
 // ==========================================
 // 1. 註冊服務
 // ==========================================

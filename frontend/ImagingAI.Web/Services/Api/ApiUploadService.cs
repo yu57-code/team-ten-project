@@ -40,13 +40,21 @@ public sealed class ApiUploadService : IUploadService
 
             using var form = new MultipartFormDataContent();
 
-            using var stream = file.BrowserFile.OpenReadStream(
-                MaxFileSize);
-
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(60));
+            await using var browserStream = file.BrowserFile.OpenReadStream(MaxFileSize, timeout.Token);
+            using var stream = new MemoryStream();
+            await browserStream.CopyToAsync(stream, timeout.Token);
+            stream.Position = 0;
             using var fileContent = new StreamContent(stream);
 
-            fileContent.Headers.ContentType =
-                new MediaTypeHeaderValue("application/pdf");
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue(
+                Path.GetExtension(file.FileName).ToLowerInvariant() switch
+                {
+                    ".pdf" => "application/pdf",
+                    ".png" => "image/png",
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    _ => "application/octet-stream"
+                });
 
             form.Add(
                 fileContent,
@@ -56,16 +64,26 @@ public sealed class ApiUploadService : IUploadService
             form.Add(
                 new StringContent(request.MedicalRecordNumber),
                 "medicalRecordNumber");
+            form.Add(new StringContent(request.ReportType), "reportType");
 
             using var response = await _httpClient.PostAsync(
                 "api/upload",
-                form);
+                form, timeout.Token);
 
             if (!response.IsSuccessStatusCode)
             {
-                var error = await response.Content.ReadAsStringAsync();
+                var message = (int)response.StatusCode switch
+                {
+                    400 => "請確認病歷號、PDF 格式和報告類型。",
+                    404 => "找不到上傳服務，請確認後端已用開發設定啟動。",
+                    409 => "相同檔案的病歷關聯需確認。",
+                    413 => "檔案超過上傳大小限制。",
+                    503 => "後端暫時無法儲存病例，請稍後再試。",
+                    _ => "後端無法完成上傳。"
+                };
                 throw new HttpRequestException(
-                    $"上傳失敗 ({(int)response.StatusCode})：{error}");
+                    $"上傳失敗（HTTP {(int)response.StatusCode}）。{message}",
+                    null, response.StatusCode);
             }
 
             var result = await response.Content
@@ -80,8 +98,8 @@ public sealed class ApiUploadService : IUploadService
                 CaseId = result.CaseId,
                 FileName = result.FileName,
                 SizeBytes = result.FileSize,
-                Description = "PDF 已上傳",
-                State = UploadJobState.Running,
+                Description = "檔案已上傳",
+                State = result.Duplicate ? UploadJobState.Duplicate : UploadJobState.Running,
                 StageIndex = 0,
                 Progress = 0,
                 CreatedAt = DateTime.Now
@@ -105,5 +123,6 @@ public sealed class ApiUploadService : IUploadService
         public string CaseId { get; set; } = "";
         public string FileName { get; set; } = "";
         public long FileSize { get; set; }
+        public bool Duplicate { get; set; }
     }
 }
