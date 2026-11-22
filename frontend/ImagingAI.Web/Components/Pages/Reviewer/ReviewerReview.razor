@@ -15,9 +15,7 @@
 }
 else if (_detail is null)
 {
-    <PageHeader Title="待覆核" Subtitle="確認重要結果、修正解析結果後，送出審核並轉換 FHIR。">
-        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
-    </PageHeader>
+    <PageHeader Title="待覆核" Subtitle="確認重要結果、修正解析結果後，送出審核並轉換 FHIR。" />
     <div class="ia-card empty-card">
         <MudIcon Icon="@Icons.Material.Outlined.TaskAlt" Class="empty-icon" />
         <div>
@@ -30,7 +28,6 @@ else if (_detail is null)
 else
 {
     <PageHeader Title="@($"{_detail.CaseId}・{_detail.ReportType}")">
-        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
         <TitleAddon>
             <StatusBadge Tone="StatusStyles.Tone(_detail.Status)" Text="@StatusText" />
         </TitleAddon>
