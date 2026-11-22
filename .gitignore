@@ -155,3 +155,4 @@ ocr-output/
 
 # Private uploaded medical files
 **/PrivateUploads/
+.venv-deid/
