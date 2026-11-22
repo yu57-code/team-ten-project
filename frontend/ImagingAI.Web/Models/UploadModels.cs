@@ -1,4 +1,3 @@
-
 using Microsoft.AspNetCore.Components.Forms;
 
 namespace ImagingAI.Web.Models;
@@ -31,6 +30,9 @@ public sealed class UploadJob
 
     public string? DuplicateOf { get; set; }
 
+    /// <summary>若判定為重複病例，記錄原案件先前分析出的病例／報告類型。</summary>
+    public string? DuplicateReportType { get; set; }
+
     public DateTime CreatedAt { get; init; }
 
     /// <summary>前 5 步處理完成（或判定重複）的時間，用來計算平均處理時間。</summary>
@@ -40,7 +42,6 @@ public sealed class UploadJob
 }
 
 /// <summary>要上傳的一個檔案。Content 由頁面讀取後提供（Mock 只用來計算雜湊）。</summary>
-
 public sealed record UploadFile(
     string FileName,
     long SizeBytes,

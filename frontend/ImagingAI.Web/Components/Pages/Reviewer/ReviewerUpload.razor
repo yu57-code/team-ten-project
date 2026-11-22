@@ -1,12 +1,14 @@
 @page "/reviewer/upload"
 @implements IDisposable
+@using ImagingAI.Web.Services.Api
 @inject IUploadService UploadService
 @inject IAuthService Auth
 @inject ISnackbar Snackbar
+@inject NavigationManager Navigation
 
 <PageTitle>上傳病例｜影像病例結構化平台</PageTitle>
 
-<PageHeader Title="上傳病例" Subtitle="支援 PDF、JPG、PNG 心導管檢查報告。上傳後系統自動建立處理任務，可在右側即時查看處理進度。" />
+<PageHeader Title="上傳病例" Subtitle="支援 PDF、JPG、PNG 醫療檢查報告。上傳後系統自動建立處理任務，可在右側即時查看處理進度。" />
 
 <div class="layout">
     <section class="left">
@@ -18,7 +20,7 @@
                  @ondrop="() => _dragOver = false">
                 <MudIcon Icon="@Icons.Material.Outlined.FileUpload" Class="drop-icon" />
                 <span class="drop-title">拖放 PDF／圖片到此處</span>
-                <span class="drop-sub">可一次上傳多份，每份建立一筆 CaseID（單檔上限 10 MB）</span>
+                <span class="drop-sub">可一次上傳多份，每份建立一筆 CaseID（單檔上限 20 MB）</span>
                 <span class="drop-btn" aria-hidden="true">選擇檔案</span>
                 <InputFile OnChange="OnFilesSelected" multiple class="drop-input" aria-label="選擇要上傳的病例檔案"
                            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png" />
@@ -51,6 +53,9 @@
                     <select id="report-type" class="ia-field" @bind="_reportType">
                         <option value="自動辨識">自動辨識</option>
                         <option value="心導管檢查報告">心導管檢查報告</option>
+                        <option value="心臟超音波報告">心臟超音波報告</option>
+                        <option value="電腦斷層（CT）檢查報告">電腦斷層（CT）檢查報告</option>
+                        <option value="胸部 X 光檢查報告">胸部 X 光檢查報告</option>
                     </select>
                 </div>
             </div>
@@ -62,6 +67,108 @@
                     上傳並建立處理任務
                 </MudButton>
             </div>
+
+            @* ---------- HTTP 409 / 重複上傳專屬衝突引導卡片 ---------- *@
+            @if (_conflictInfo is not null)
+            {
+                @if (_conflictInfo.ConflictType == UploadConflictType.ExactDuplicate)
+                {
+                    @* 情境 A：原病例已存在且病歷號一致 — 重複上傳 *@
+                    <div class="mt-4 pa-4 rounded-lg" style="background-color: #EFF6FF; border: 1px solid #BFDBFE;">
+                        <div class="d-flex align-start gap-3">
+                            <MudIcon Icon="@Icons.Material.Outlined.Info" Color="Color.Info" Class="mt-1" />
+                            <div class="flex-grow-1">
+                                <MudText Typo="Typo.subtitle2" Style="font-weight: 600; color: #1E3A8A;">
+                                    此檔案已於 @(_conflictInfo.UploadedAt?.ToString("yyyy/MM/dd") ?? "先前") 上傳過（病例 ID：@FormatCaseLabel(_conflictInfo.ExistingCaseId)）
+                                </MudText>
+                                <MudText Typo="Typo.body2" Class="mt-1" Style="color: #1E40AF;">
+                                    系統已有相同檔案與相同病歷號的處理紀錄，無需重複建立案件。
+                                </MudText>
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    <MudButton Variant="Variant.Filled"
+                                               Color="Color.Primary"
+                                               DropShadow="false"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Outlined.Visibility"
+                                               OnClick="@(() => InspectExistingCase(_conflictInfo.ExistingCaseId, _conflictInfo.FileName))">
+                                        直接檢視該病例進度
+                                    </MudButton>
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Default"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Outlined.Refresh"
+                                               OnClick="ClearConflictAndFiles">
+                                        清除並重新選擇檔案
+                                    </MudButton>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_conflictInfo.ConflictType == UploadConflictType.PatientIdMismatch)
+                {
+                    @* 情境 B：檔案內容相同，但輸入的病歷號與原紀錄不一致 *@
+                    <div class="mt-4 pa-4 rounded-lg" style="background-color: #FFFBEB; border: 1px solid #FDE68A;">
+                        <div class="d-flex align-start gap-3">
+                            <MudIcon Icon="@Icons.Material.Outlined.WarningAmber" Color="Color.Warning" Class="mt-1" />
+                            <div class="flex-grow-1">
+                                <MudText Typo="Typo.subtitle2" Style="font-weight: 600; color: #92400E;">
+                                    系統偵測到此報告檔案與既有紀錄（病例 ID：@FormatCaseLabel(_conflictInfo.ExistingCaseId)）內容完全相同，但輸入的病歷號不符。
+                                </MudText>
+                                <MudText Typo="Typo.body2" Class="mt-1" Style="color: #B45309;">
+                                    請檢查是否輸錯病歷號@(!string.IsNullOrWhiteSpace(_conflictInfo.ExistingMedicalRecordNumber) ? $"（原紀錄病歷號為：{_conflictInfo.ExistingMedicalRecordNumber}）" : "")，或重新選擇正確檔案。
+                                </MudText>
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    @if (!string.IsNullOrWhiteSpace(_conflictInfo.ExistingMedicalRecordNumber))
+                                    {
+                                        <MudButton Variant="Variant.Filled"
+                                                   Color="Color.Warning"
+                                                   DropShadow="false"
+                                                   Size="Size.Small"
+                                                   StartIcon="@Icons.Material.Outlined.AutoFixHigh"
+                                                   OnClick="@(() => ApplyExistingMrnAndInspect(_conflictInfo.ExistingMedicalRecordNumber!, _conflictInfo.ExistingCaseId, _conflictInfo.FileName))">
+                                            帶入原紀錄病歷號並檢視
+                                        </MudButton>
+                                    }
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Default"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Outlined.Refresh"
+                                               OnClick="ClearConflictAndFiles">
+                                        清除並重新選擇檔案
+                                    </MudButton>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+                else if (_conflictInfo.ConflictType == UploadConflictType.MissingPatientLinkRecord)
+                {
+                    @* 情境 C：原紀錄的病歷號關聯檔遺失導致無法比對 *@
+                    <div class="mt-4 pa-4 rounded-lg" style="background-color: #FEF2F2; border: 1px solid #FECACA;">
+                        <div class="d-flex align-start gap-3">
+                            <MudIcon Icon="@Icons.Material.Outlined.ErrorOutline" Color="Color.Error" Class="mt-1" />
+                            <div class="flex-grow-1">
+                                <MudText Typo="Typo.subtitle2" Style="font-weight: 600; color: #991B1B;">
+                                    此檔案曾有未完成的殘留上傳紀錄，導致病歷號比對異常。
+                                </MudText>
+                                <MudText Typo="Typo.body2" Class="mt-1" Style="color: #B91C1C;">
+                                    後端找不到原紀錄對應的病歷號關聯檔，即使輸入相同病歷號也無法比對，請聯繫管理員清理殘留紀錄或改傳其他報告。
+                                </MudText>
+                                <div class="d-flex flex-wrap gap-2 mt-3">
+                                    <MudButton Variant="Variant.Outlined"
+                                               Color="Color.Error"
+                                               Size="Size.Small"
+                                               StartIcon="@Icons.Material.Outlined.Refresh"
+                                               OnClick="ClearConflictAndFiles">
+                                        清除並重新選擇檔案
+                                    </MudButton>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                }
+            }
         </div>
 
         @* ---------- 本次上傳 ---------- *@
@@ -86,7 +193,13 @@
                             <StatusBadge Tone="BadgeTone.Man" Text="已進入待覆核" />
                             break;
                         case UploadJobState.Duplicate:
-                            <StatusBadge Tone="BadgeTone.Mute" Text="重複病例" />
+                            <div class="d-flex align-center gap-1 flex-wrap">
+                                <StatusBadge Tone="BadgeTone.Mute" Text="重複病例" />
+                                @if (!string.IsNullOrWhiteSpace(job.DuplicateReportType))
+                                {
+                                    <StatusBadge Tone="BadgeTone.Info" Text="@job.DuplicateReportType" />
+                                }
+                            </div>
                             break;
                         default:
                             <StatusBadge Tone="BadgeTone.Err" Text="失敗" />
@@ -126,7 +239,12 @@
             else if (_tracked.State == UploadJobState.Duplicate)
             {
                 <div class="dup-banner">
-                    SHA-256 已存在，已直接回傳 <span class="ia-mono">@_tracked.DuplicateOf</span> 的病例結果，不重複解析。
+                    SHA-256 已存在，已直接回傳 <span class="ia-mono">@_tracked.DuplicateOf</span> 的病例結果
+                    @if (!string.IsNullOrWhiteSpace(_tracked.DuplicateReportType))
+                    {
+                        <span>（先前分析類型：<strong>@_tracked.DuplicateReportType</strong>）</span>
+                    }
+                    ，不重複解析。
                 </div>
             }
         }
@@ -135,13 +253,14 @@
 </div>
 
 @code {
-    private const long MaxFileSize = 10 * 1024 * 1024;
+    private const long MaxFileSize = 20L * 1024 * 1024;
     private const int MaxFileCount = 10;
     private static readonly string[] AllowedExtensions = [".pdf", ".jpg", ".jpeg", ".png"];
 
     private readonly List<UploadFile> _selectedFiles = [];
     private List<UploadJob> _jobs = [];
     private UploadJob? _tracked;
+    private UploadConflictInfo? _conflictInfo;
 
     private string _mrn = string.Empty;
     private string _reportType = "自動辨識";
@@ -167,8 +286,8 @@
     private void OnFilesSelected(InputFileChangeEventArgs e)
     {
         _dragOver = false;
+        _conflictInfo = null;
 
-        // GetMultipleFiles 超過上限會丟例外，所以先放寬，再由下面自己檢查數量
         foreach (var file in e.GetMultipleFiles(maximumFileCount: 100))
         {
             var extension = Path.GetExtension(file.Name).ToLowerInvariant();
@@ -180,7 +299,7 @@
 
             if (file.Size == 0 || file.Size > MaxFileSize)
             {
-                Snackbar.Add($"{file.Name}：檔案必須大於 0 且不超過 10 MB", Severity.Error);
+                Snackbar.Add($"{file.Name}：檔案必須大於 0 且不超過 20 MB", Severity.Error);
                 continue;
             }
 
@@ -198,14 +317,19 @@
             var contentType = string.IsNullOrEmpty(file.ContentType)
                 ? (extension == ".pdf" ? "application/pdf" : "image/" + extension.TrimStart('.'))
                 : file.ContentType;
-            _selectedFiles.Add(new UploadFile(file.Name,file.Size,contentType,file
-    )
-);
 
+            _selectedFiles.Add(new UploadFile(file.Name, file.Size, contentType, file));
         }
     }
 
-    private void RemoveFile(UploadFile file) => _selectedFiles.Remove(file);
+    private void RemoveFile(UploadFile file)
+    {
+        _selectedFiles.Remove(file);
+        if (_selectedFiles.Count == 0)
+        {
+            _conflictInfo = null;
+        }
+    }
 
     private async Task SubmitAsync()
     {
@@ -222,21 +346,44 @@
         }
 
         _submitting = true;
+        _conflictInfo = null;
+
         try
         {
+            var normalizedMrn = _mrn.Trim();
             var created = await UploadService.StartAsync(
-                new UploadRequest(_selectedFiles.ToList(), _mrn.Trim(), _reportType, UserName));
+                new UploadRequest(_selectedFiles.ToList(), normalizedMrn, _reportType, UserName));
             await LoadJobsAsync();
             _jobs = created.Concat(_jobs).DistinctBy(job => job.CaseId).ToList();
             _tracked = created.FirstOrDefault(job => job.State == UploadJobState.Running)
                        ?? created.FirstOrDefault();
 
-            var duplicates = created.Count(job => job.State == UploadJobState.Duplicate);
-            Snackbar.Add(duplicates > 0
-                ? $"收到 {created.Count} 筆結果，其中 {duplicates} 筆已存在"
-                : $"已建立 {created.Count} 筆處理任務", Severity.Success);
-            _selectedFiles.Clear();
-            _mrn = string.Empty;
+            var duplicateJob = created.FirstOrDefault(job => job.State == UploadJobState.Duplicate);
+            if (duplicateJob is not null)
+            {
+                // 若後端在病歷號一致時以 HTTP 200 回傳 Duplicate 狀態，同步顯示情境 A 卡片
+                _conflictInfo = new UploadConflictInfo(
+                    UploadConflictType.ExactDuplicate,
+                    duplicateJob.FileName,
+                    duplicateJob.DuplicateOf ?? duplicateJob.CaseId,
+                    normalizedMrn,
+                    duplicateJob.CreatedAt);
+            }
+            else
+            {
+                Snackbar.Add($"已建立 {created.Count} 筆處理任務", Severity.Success);
+                _selectedFiles.Clear();
+                _mrn = string.Empty;
+            }
+        }
+        catch (UploadConflictException conflict)
+        {
+            _conflictInfo = new UploadConflictInfo(
+                conflict.ConflictType,
+                conflict.FileName,
+                conflict.ExistingCaseId,
+                conflict.ExistingMedicalRecordNumber,
+                conflict.UploadedAt);
         }
         catch (HttpRequestException error) when (error.StatusCode.HasValue)
         {
@@ -260,6 +407,44 @@
         }
     }
 
+    private void InspectExistingCase(string? existingCaseId, string fileName)
+    {
+        var targetId = string.IsNullOrWhiteSpace(existingCaseId) ? "既有病例" : existingCaseId;
+        var existingJob = _jobs.FirstOrDefault(j => string.Equals(j.CaseId, targetId, StringComparison.OrdinalIgnoreCase));
+
+        if (existingJob is null)
+        {
+            existingJob = new UploadJob
+            {
+                CaseId = targetId,
+                FileName = fileName,
+                State = UploadJobState.Duplicate,
+                StageIndex = 1,
+                DuplicateOf = targetId,
+                CreatedAt = _conflictInfo?.UploadedAt ?? DateTime.Now,
+                FinishedAt = _conflictInfo?.UploadedAt ?? DateTime.Now
+            };
+            _jobs.Insert(0, existingJob);
+        }
+
+        _tracked = existingJob;
+        _conflictInfo = null;
+        _selectedFiles.Clear();
+    }
+
+    private void ApplyExistingMrnAndInspect(string existingMrn, string? existingCaseId, string fileName)
+    {
+        _mrn = existingMrn;
+        Snackbar.Add($"已帶入原紀錄病歷號：{existingMrn}", Severity.Info);
+        InspectExistingCase(existingCaseId, fileName);
+    }
+
+    private void ClearConflictAndFiles()
+    {
+        _conflictInfo = null;
+        _selectedFiles.Clear();
+    }
+
     private void OnJobChanged(UploadJob job)
     {
         if (_jobs.Any(j => j.CaseId == job.CaseId))
@@ -267,6 +452,9 @@
             _ = InvokeAsync(StateHasChanged);
         }
     }
+
+    private static string FormatCaseLabel(string? caseId) =>
+        string.IsNullOrWhiteSpace(caseId) ? "#未知" : (caseId.StartsWith('#') ? caseId : $"#{caseId}");
 
     private static string JobDescription(UploadJob job) => job.State == UploadJobState.Duplicate
         ? $"{job.FileName}・SHA-256 已存在，已回傳既有結果"
@@ -277,4 +465,11 @@
         : $"{Math.Max(1, bytes / 1024)} KB";
 
     public void Dispose() => UploadService.JobChanged -= OnJobChanged;
+
+    private sealed record UploadConflictInfo(
+        UploadConflictType ConflictType,
+        string FileName,
+        string? ExistingCaseId,
+        string? ExistingMedicalRecordNumber,
+        DateTime? UploadedAt);
 }

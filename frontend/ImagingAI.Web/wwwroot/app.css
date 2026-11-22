@@ -137,10 +137,11 @@ h1:focus {
 
 /* ---------- 版面骨架：側欄＋內容區 ---------- */
 .ia-shell {
-    min-height: 100vh;
+    height: 100vh !important;
     width: 100%;
     display: flex;
-    flex-wrap: nowrap; /* 保持左右並排，防止內容區折行下掉 */
+    flex-wrap: nowrap;
+    overflow: hidden !important;
     background: var(--ia-bg);
     color: var(--ia-text);
     font-family: var(--ia-font);
@@ -154,10 +155,167 @@ h1:focus {
     color: var(--ia-link-hover);
 }
 
-/* 右側主內容區自適應填滿剩餘寬度 */
+/* 左側深藍色側邊欄：固定滿版高度 100vh + 支援平滑收縮 */
+.ia-sidebar {
+    width: var(--ia-side-width) !important;
+    min-width: var(--ia-side-width) !important;
+    max-width: var(--ia-side-width) !important;
+    height: 100vh !important;
+    position: sticky !important;
+    top: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    flex-shrink: 0 !important;
+    overflow: hidden !important;
+    transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+                max-width 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+/* 收合狀態寬度：強制縮小成 76px 圖示列 */
+.ia-sidebar.is-collapsed {
+    width: 76px !important;
+    min-width: 76px !important;
+    max-width: 76px !important;
+}
+
+/* 頂部品牌與右上角收合按鈕排列 */
+.ia-brand {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: space-between !important;
+    gap: 10px !important;
+}
+
+.ia-brand-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.ia-sidebar.is-collapsed .ia-brand {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+/* 右上角收合按鈕（仿 Gemini 懸停微亮方框） */
+.ia-collapse-btn {
+    width: 34px;
+    height: 34px;
+    border-radius: 8px;
+    border: none;
+    background: transparent;
+    color: var(--ia-side-text);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background-color 0.2s, color 0.2s;
+}
+
+.ia-collapse-btn:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    color: #FFFFFF;
+}
+
+/* 導覽選單區：選項多時可獨立捲動，不擠掉底部登出區 */
+.ia-nav {
+    flex: 1 !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+}
+
+.ia-sidebar-spacer {
+    display: none !important;
+}
+
+/* 收合時：強制隱藏選單文字與數字徽章，並讓圖示置中 */
+.ia-sidebar.is-collapsed .ia-nav-text,
+.ia-sidebar.is-collapsed .ia-nav-badge,
+.ia-sidebar.is-collapsed .mud-nav-link-text {
+    display: none !important;
+}
+
+.ia-sidebar.is-collapsed .mud-nav-link {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+    margin-left: 8px !important;
+    margin-right: 8px !important;
+}
+
+.ia-sidebar.is-collapsed .mud-nav-link-icon {
+    margin-right: 0 !important;
+    margin-inline-end: 0 !important;
+}
+/* ---------- 側邊欄未選中項目：圖示與文字皆維持純白（高對比） ---------- */
+.ia-sidebar .mud-nav-link:not(.active),
+.ia-sidebar .mud-nav-link:not(.active) .ia-nav-text,
+.ia-sidebar .mud-nav-link:not(.active) .mud-nav-link-text,
+.ia-sidebar .mud-nav-link:not(.active) .mud-nav-link-icon {
+    color: #FFFFFF !important;
+}
+
+.ia-sidebar .mud-nav-link:not(.active):hover {
+    background-color: rgba(255, 255, 255, 0.14) !important;
+    border-radius: 10px !important;
+}
+
+/* ---------- 目前所在頁面（Active）：純白底色＋深色文字與圖示 ---------- */
+.ia-sidebar .mud-nav-link.active,
+.ia-sidebar .mud-nav-link.active:hover {
+    background-color: #FFFFFF !important;
+    color: var(--ia-side-active) !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+.ia-sidebar .mud-nav-link.active .ia-nav-text,
+.ia-sidebar .mud-nav-link.active .mud-nav-link-text,
+.ia-sidebar .mud-nav-link.active .mud-nav-link-icon {
+    color: var(--ia-side-active) !important;
+}
+
+/* ---------- 目前所在頁面（Active）：恢復純白底色＋深色高對比文字與圖示 ---------- */
+.ia-sidebar .mud-nav-link.active,
+.ia-sidebar .mud-nav-link.active:hover {
+    background-color: #FFFFFF !important;
+    color: var(--ia-side-active) !important;
+    font-weight: 700 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+.ia-sidebar .mud-nav-link.active .ia-nav-text,
+.ia-sidebar .mud-nav-link.active .mud-nav-link-text,
+.ia-sidebar .mud-nav-link.active .mud-nav-link-icon {
+    color: var(--ia-side-active) !important;
+}
+
+/* 底部使用者資訊與登出區：永遠貼齊視窗最左下角 */
+.ia-userbox {
+    margin-top: auto !important;
+    flex-shrink: 0 !important;
+}
+
+.ia-sidebar.is-collapsed .ia-userbox {
+    justify-content: center !important;
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+/* 右側主內容區：獨立捲動，完全不影響左側欄 */
 .ia-main {
     flex: 1;
     min-width: 0;
+    height: 100vh !important;
+    overflow-y: auto !important;
     box-sizing: border-box;
     padding: 32px 40px 48px;
     display: flex;
