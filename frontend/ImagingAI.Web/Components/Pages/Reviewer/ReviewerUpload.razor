@@ -233,20 +233,42 @@
         }
 
         _submitting = true;
-        var created = await UploadService.StartAsync(new UploadRequest(_selectedFiles.ToList(), _mrn.Trim(), _reportType, UserName));
-        _submitting = false;
+        try
+        {
+            var created = await UploadService.StartAsync(
+                new UploadRequest(_selectedFiles.ToList(), _mrn.Trim(), _reportType, UserName));
+            await LoadJobsAsync();
+            _jobs = created.Concat(_jobs).DistinctBy(job => job.CaseId).ToList();
+            _tracked = created.FirstOrDefault(job => job.State == UploadJobState.Running)
+                       ?? created.FirstOrDefault();
 
-        await LoadJobsAsync();
-        _tracked = _jobs.FirstOrDefault(j => j.CaseId == created.FirstOrDefault(c => c.State == UploadJobState.Running)?.CaseId)
-                   ?? _jobs.FirstOrDefault(j => j.CaseId == created.FirstOrDefault()?.CaseId);
-
-        var duplicates = created.Count(j => j.State == UploadJobState.Duplicate);
-        Snackbar.Add(duplicates > 0
-            ? $"已建立 {created.Count} 筆處理任務，其中 {duplicates} 筆為重複病例（已回傳既有結果）"
-            : $"已建立 {created.Count} 筆處理任務", Severity.Success);
-
-        _selectedFiles.Clear();
-        _mrn = string.Empty;
+            var duplicates = created.Count(job => job.State == UploadJobState.Duplicate);
+            Snackbar.Add(duplicates > 0
+                ? $"收到 {created.Count} 筆結果，其中 {duplicates} 筆已存在"
+                : $"已建立 {created.Count} 筆處理任務", Severity.Success);
+            _selectedFiles.Clear();
+            _mrn = string.Empty;
+        }
+        catch (HttpRequestException error) when (error.StatusCode.HasValue)
+        {
+            Snackbar.Add(error.Message, Severity.Error);
+        }
+        catch (HttpRequestException)
+        {
+            Snackbar.Add("無法連線到上傳服務，請確認後端已啟動後再試。", Severity.Error);
+        }
+        catch (OperationCanceledException)
+        {
+            Snackbar.Add("上傳等候逾時，請重新選取檔案後再試。", Severity.Error);
+        }
+        catch (Exception)
+        {
+            Snackbar.Add("上傳未完成，請重新選取檔案或稍後重試。", Severity.Error);
+        }
+        finally
+        {
+            _submitting = false;
+        }
     }
 
     private void OnJobChanged(UploadJob job)

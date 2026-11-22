@@ -1,3 +1,4 @@
+
 # ==========================================
 # 1. .NET / C# (Backend & Blazor)
 # ==========================================
@@ -66,13 +67,16 @@ htmlcov/
 # 3. AI Models / OCR Cache
 # ==========================================
 
-# Model cache
+# PaddleOCR / PaddleX model cache
 .paddlex/
 .paddleocr/
 .cache/
-models/
 
-# Large model files
+# IMPORTANT:
+# Do not ignore all models/ directories.
+# ASP.NET Core Models/ contains C# source code.
+
+# Ignore AI model weights and large model files
 *.onnx
 *.pdmodel
 *.pdiparams
@@ -131,9 +135,55 @@ docker/data/
 *.sqlite3
 *.db-journal
 
+## ==========================================
+## 7. 測試影像與 AI 模型快取 (OCR / Medical Data)
+## ==========================================
+# 測試圖片目錄（避免病歷影像外流）
+test_images/
+*.png
+*.jpg
+*.jpeg
+*.bmp
+*.tiff
+*.pdf
+
+# PaddleOCR / 深度學習本地自動下載的權重快取
+.paddleocr/
+.paddlenlp/
+inference/
+/models/
+*.onnx
+*.pdparams
+*.pdopt
+*.pdmodel
+
+# ==========================================
+# 8. Presidio 與醫療資料保護
+# ==========================================
+
+# Presidio 專用虛擬環境
+.venv-deid/
+
+# OCR、Presidio 執行結果
+output/
+
+# 額外的本機測試資料
+test_data/
+
+# 醫療資料檔案
+*.dcm
+*.dicom
+
+# 本機除錯紀錄
+debug/
 # PostgreSQL local backup files
 *.dump
 *.backup
+
+# Keep database schema and SQL scripts
+# database/schema/
+# database/seed/
+# database/table/
 
 # ==========================================
 # 8. Temporary Files
@@ -155,4 +205,15 @@ ocr-output/
 
 # Private uploaded medical files
 **/PrivateUploads/
-.venv-deid/
+
+# ==========================================
+# 10. Additional Sensitive Data
+# ==========================================
+
+# Local certificates and credentials
+*.pfx
+*.p12
+*.credentials.json
+
+# Local application secrets
+appsettings.*.Secret.json

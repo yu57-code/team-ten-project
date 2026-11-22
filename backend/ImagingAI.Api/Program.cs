@@ -1,17 +1,41 @@
+
 using Microsoft.OpenApi.Models;
 using System.Text;
 using System.Text.RegularExpressions;
+using Microsoft.EntityFrameworkCore;
+using ImagingAI.Api.Data;
+using Microsoft.AspNetCore.DataProtection;
+using System.Text.Json.Serialization;
+using ImagingAI.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
-
+builder.Services.AddDataProtection();
+if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Ocr:Enabled"))
+{
+    builder.Services.AddSingleton<IExtractedFieldsStore, PrivateJsonFieldsStore>();
+    builder.Services.AddHostedService<PdfOcrWorker>();
+}
+builder.Services.AddDbContext<ImagingAiDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection")
+    )
+);
 // ==========================================
 // 1. 註冊服務
 // ==========================================
 
-builder.Services.AddControllers();
+// Controller 註冊
+// 新增：Enum 使用文字格式傳送
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
+    {
+        options.JsonSerializerOptions.Converters.Add(
+            new JsonStringEnumConverter());
+    });
 
 builder.Services.AddEndpointsApiExplorer();
 
+// Swagger 設定（保留原本設定）
 builder.Services.AddSwaggerGen(options =>
 {
     options.SwaggerDoc("v1", new OpenApiInfo
@@ -21,6 +45,14 @@ builder.Services.AddSwaggerGen(options =>
         Description = "影像病例結構化平台 Web API"
     });
 });
+
+// ==========================================
+// 新增：異常佇列服務
+// ==========================================
+
+// Singleton：整個應用程式共用同一份模擬資料
+// 不連接 PostgreSQL
+builder.Services.AddSingleton<ExceptionService>();
 
 // ==========================================
 // 2. 建立應用程式
@@ -34,7 +66,7 @@ var app = builder.Build();
 
 if (app.Environment.IsDevelopment())
 {
-    // 僅針對 Swagger JSON 進行版本相容性處理
+    // 保留原本 Swagger JSON 版本相容性處理
     app.Use(async (context, next) =>
     {
         if (!context.Request.Path.Equals(
