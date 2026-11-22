@@ -46,6 +46,7 @@ public sealed class ExceptionItem
     public required string Id { get; init; }
 
     public required string CaseId { get; init; }
+    public string Code { get; init; } = string.Empty;
 
     public ExceptionCategory Category { get; init; }
 

@@ -50,9 +50,13 @@ builder.Services.AddSwaggerGen(options =>
 // 新增：異常佇列服務
 // ==========================================
 
-// Singleton：整個應用程式共用同一份模擬資料
-// 不連接 PostgreSQL
-builder.Services.AddSingleton<ExceptionService>();
+// 每個請求使用 Scoped DbContext 讀取 PostgreSQL 異常佇列。
+builder.Services.AddScoped<ExceptionService>();
+builder.Services.AddScoped<MrnEvidenceService>();
+builder.Services.AddScoped<IMrnCorrectionAccess>(services => services.GetRequiredService<MrnEvidenceService>());
+builder.Services.AddScoped<IMrnCorrectionRepository, NpgsqlMrnCorrectionRepository>();
+builder.Services.AddScoped<IProtectedMrnCorrectionStore, ProtectedMrnCorrectionStore>();
+builder.Services.AddScoped<MrnCorrectionService>();
 
 // ==========================================
 // 2. 建立應用程式

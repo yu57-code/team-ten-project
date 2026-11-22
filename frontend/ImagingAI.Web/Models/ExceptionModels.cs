@@ -32,6 +32,7 @@ public sealed record ComparisonRow(string Field, string Actual, string Expected,
 /// <summary>異常佇列中的一筆（對應 ExceptionQueue）。</summary>
 public sealed class ExceptionItem
 {
+    public string Code { get; init; } = string.Empty;
     public required string Id { get; init; }
 
     public required string CaseId { get; init; }
@@ -64,6 +65,41 @@ public sealed class ExceptionItem
 
     public string? ResolutionNote { get; set; }
 }
+
+public sealed record MrnEvidenceCandidate(string Value, int Page, string BlockId,
+    int[] Bbox, double Confidence, string ReviewStatus);
+
+public sealed record MrnEvidence(string ExceptionId, string ReportId, long ReviewerId,
+    Guid OcrAttemptId, string OriginalSha256, string CandidateSha256,
+    string UploadedMrn, IReadOnlyList<MrnEvidenceCandidate> Candidates,
+    string ReviewStatus, bool CloudUploadAllowed,
+    int? CurrentCorrectionVersion = null, Guid? LastCorrectionRequestId = null);
+
+public sealed record MrnEvidenceResult(MrnEvidence? Evidence, string? Error);
+
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<MrnCorrectionReason>))]
+public enum MrnCorrectionReason
+{
+    UPLOAD_MRN_INPUT_ERROR,
+    OCR_RECOGNITION_ERROR,
+    DOCUMENT_CASE_MISMATCH
+}
+
+public sealed record MrnEvidenceReference(int Page, string BlockId);
+
+public sealed record MrnCorrectionRequest(Guid RequestId, int ExpectedCorrectionVersion,
+    Guid OcrAttemptId, string OriginalSha256, string CandidateSha256,
+    MrnCorrectionReason Reason, string ConfirmedMrn,
+    IReadOnlyList<MrnEvidenceReference> EvidenceReferences, string Note);
+
+public sealed record MrnCorrectionResponse(bool Success, string Message, Guid RequestId,
+    int CorrectionVersion, string ExceptionStatus, string ValidationStatus, string ProcessingStatus,
+    [property: System.Text.Json.Serialization.JsonRequired] bool ResumeQueued,
+    [property: System.Text.Json.Serialization.JsonRequired] bool CloudUploadAllowed,
+    [property: System.Text.Json.Serialization.JsonRequired] bool SourceConfirmationRequired);
+
+public sealed record MrnCorrectionSaveResult(MrnCorrectionResponse? Response, int? StatusCode,
+    string Message, bool OutcomeUnknown = false);
 
 /// <summary>人工處理異常時送出的內容。</summary>
 public sealed record ExceptionResolution(string FixValue, ExceptionStatus Status, bool MergeIntoExistingPatient, string Note);
