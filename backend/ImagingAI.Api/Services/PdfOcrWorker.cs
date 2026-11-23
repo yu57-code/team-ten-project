@@ -180,18 +180,23 @@ public sealed class PdfOcrWorker(
         }
     }
 
+    private const string VerifiedDeidStatus = "AUTO_REDACTED_PENDING_REVIEW";
+
     private static async Task<bool> SetStatusAsync(NpgsqlConnection connection, long caseId,
         string status, CancellationToken cancellationToken, string[] previousStatuses,
-        string? exceptionCategory = null, OcrCandidateBatch? batch = null)
+        string? exceptionCategory = null, OcrCandidateBatch? batch = null, string? deidStatus = null)
     {
         await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-        await using var update = new NpgsqlCommand("""
-            UPDATE clinical.clinical_report SET processing_status = @status
+        var deidAssignment = deidStatus is null ? string.Empty : ", deid_status = @deid_status";
+        await using var update = new NpgsqlCommand($"""
+            UPDATE clinical.clinical_report SET processing_status = @status{deidAssignment}
             WHERE report_id = @id AND NOT is_deleted AND processing_status = ANY(@previous)
             """, connection, transaction);
         update.Parameters.AddWithValue("id", caseId);
         update.Parameters.AddWithValue("status", status);
         update.Parameters.AddWithValue("previous", previousStatuses);
+        if (deidStatus is not null)
+            update.Parameters.AddWithValue("deid_status", deidStatus);
         if (await update.ExecuteNonQueryAsync(cancellationToken) != 1)
             return false;
 
@@ -340,6 +345,7 @@ public sealed class PdfOcrWorker(
         var timer = Stopwatch.StartNew();
         var outcome = "DEID_FAILED";
         var category = "DEID_VERIFICATION_FAILED";
+        string? deidStatus = null;
         int? exitCode = null;
         try
         {
@@ -413,6 +419,7 @@ public sealed class PdfOcrWorker(
                 {
                     await VerifyAndPublishDeidAsync(attempt, source, pageCount, cancellationToken);
                     outcome = "PENDING_REVIEW";
+                    deidStatus = VerifiedDeidStatus;
                     category = null;
                 }
             }
@@ -425,7 +432,8 @@ public sealed class PdfOcrWorker(
                 caseId, exception.GetType().Name);
         }
 
-        await SetStatusAsync(connection, caseId, outcome, cancellationToken, [previous, "DEID_PROCESSING"], category);
+        await SetStatusAsync(connection, caseId, outcome, cancellationToken, [previous, "DEID_PROCESSING"],
+            category, deidStatus: deidStatus);
         logger.LogInformation("De-identification case {CaseId}: {Status}, exit {ExitCode}, {ElapsedMs} ms",
             caseId, outcome, exitCode, timer.ElapsedMilliseconds);
     }
@@ -511,7 +519,7 @@ public sealed class PdfOcrWorker(
             result.GetProperty("schema_version").GetString() != "deid_ocr/v1" ||
             result.GetProperty("page_count").GetInt32() != pageCount ||
             result.GetProperty("pages").GetArrayLength() != pageCount ||
-            result.GetProperty("deid_status").GetString() != "AUTO_REDACTED_PENDING_REVIEW" ||
+            result.GetProperty("deid_status").GetString() != VerifiedDeidStatus ||
             result.GetProperty("review_status").GetString() != "PENDING_REVIEW" ||
             result.GetProperty("cloud_upload_allowed").GetBoolean() ||
             !result.GetProperty("verification").GetProperty("passed_automated_checks").GetBoolean())

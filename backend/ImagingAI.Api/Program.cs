@@ -9,23 +9,28 @@ using System.Text.Json.Serialization;
 using ImagingAI.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+
 builder.Services.AddDataProtection();
-if (builder.Environment.IsDevelopment() && builder.Configuration.GetValue<bool>("Ocr:Enabled"))
+
+if (builder.Environment.IsDevelopment() &&
+    builder.Configuration.GetValue<bool>("Ocr:Enabled"))
 {
     builder.Services.AddSingleton<IExtractedFieldsStore, PrivateJsonFieldsStore>();
     builder.Services.AddHostedService<PdfOcrWorker>();
 }
+
 builder.Services.AddDbContext<ImagingAiDbContext>(options =>
     options.UseNpgsql(
         builder.Configuration.GetConnectionString("DefaultConnection")
     )
 );
+
 // ==========================================
 // 1. 註冊服務
 // ==========================================
 
 // Controller 註冊
-// 新增：Enum 使用文字格式傳送
+// Enum 使用文字格式傳送
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -47,12 +52,19 @@ builder.Services.AddSwaggerGen(options =>
 });
 
 // ==========================================
-// 新增：異常佇列服務
+// 異常佇列服務（保留 Mock）
 // ==========================================
 
 // Singleton：整個應用程式共用同一份模擬資料
 // 不連接 PostgreSQL
 builder.Services.AddSingleton<ExceptionService>();
+
+// ==========================================
+// 新增：待覆核 API 服務
+// ==========================================
+
+// Scoped：使用 EF Core DbContext 查詢 PostgreSQL
+builder.Services.AddScoped<ReviewService>();
 
 // ==========================================
 // 2. 建立應用程式

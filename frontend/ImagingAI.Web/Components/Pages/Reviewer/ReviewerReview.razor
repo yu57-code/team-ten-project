@@ -1,7 +1,11 @@
 @page "/reviewer/review"
 @page "/reviewer/review/{CaseId}"
+@using System.Globalization
+@using System.Text.Json
 @using System.Text.RegularExpressions
+@implements IAsyncDisposable
 @inject ICaseService CaseService
+@inject IReviewApiService ReviewApi
 @inject IAuthService Auth
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
@@ -15,17 +19,49 @@
 }
 else if (_detail is null)
 {
-    <PageHeader Title="待覆核" Subtitle="確認重要結果、修正解析結果後，送出審核並轉換 FHIR。">
+    <PageHeader Title="待覆核" Subtitle="病例基本資料（唯讀）">
         <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
     </PageHeader>
-    <div class="ia-card empty-card">
-        <MudIcon Icon="@Icons.Material.Outlined.TaskAlt" Class="empty-icon" />
-        <div>
-            <div class="empty-title">@(CaseId is null ? "目前沒有待覆核的病例" : $"找不到病例 {CaseId}")</div>
-            <p class="muted">可以回到總覽查看所有病例的處理進度。</p>
+    @if (_reviewError is not null)
+    {
+        <MudAlert Severity="Severity.Error">@_reviewError</MudAlert>
+    }
+    @if (_hasPendingSnapshot)
+    {
+        <section class="ia-card block">
+            <h2 class="card-title">待覆核清單（@_pendingReviews.Count 筆）</h2>
+            @foreach (var item in _pendingReviews)
+            {
+                <MudButton @key="item.ReportId" Class="ia-btn"
+                           Variant="@(item.ReportId == _selectedReportId ? Variant.Filled : Variant.Outlined)"
+                           OnClick="() => SelectReview(item)">
+                    #@item.ReportId · @DisplayValue(item.FileName)
+                </MudButton>
+            }
+        </section>
+    }
+    @if (_apiReview is { } review)
+    {
+        <section class="ia-card block">
+            <dl class="field-grid">
+                <div><dt class="ia-label">病例編號</dt><dd class="ia-mono">@review.ReportId</dd></div>
+                <div><dt class="ia-label">檔案名稱</dt><dd>@DisplayValue(review.FileName)</dd></div>
+                <div><dt class="ia-label">處理狀態</dt><dd>@DisplayValue(review.ProcessingStatus)</dd></div>
+                <div><dt class="ia-label">上傳時間</dt><dd>@(review.UploadedAt == default ? "未提供" : review.UploadedAt.ToString("yyyy-MM-dd HH:mm:ss K", CultureInfo.InvariantCulture).TrimEnd())</dd></div>
+                <div><dt class="ia-label">報告類型 ID</dt><dd>@(review.ReportTypeId?.ToString() ?? "未提供")</dd></div>
+                <div><dt class="ia-label">報告類型</dt><dd>@DisplayValue(review.ReportType)</dd></div>
+                <div><dt class="ia-label">去識別化狀態</dt><dd>@DisplayValue(review.DeidStatus)</dd></div>
+            </dl>
+        </section>
+    }
+    else if (_reviewNotice is not null)
+    {
+        <div class="ia-card empty-card" role="status">
+            <MudIcon Icon="@Icons.Material.Outlined.TaskAlt" Class="empty-icon" />
+            <div class="empty-title">@_reviewNotice</div>
+            <MudButton Href="/reviewer" Variant="Variant.Outlined" Class="ia-btn">回到總覽</MudButton>
         </div>
-        <MudButton Href="/reviewer" Variant="Variant.Outlined" Class="ia-btn">回到總覽</MudButton>
-    </div>
+    }
 }
 else
 {
@@ -307,6 +343,20 @@ else
     private static readonly Regex MaskPattern = new(@"\[(PERSON|ID|DATE|HOSPITAL)\]", RegexOptions.Compiled);
 
     private CaseReviewDetail? _detail;
+    private ApiReviewDto? _apiReview;
+    private string? _reviewError;
+    private string? _reviewNotice;
+    private IReadOnlyList<ApiReviewDto> _pendingReviews = [];
+    private bool _hasPendingSnapshot;
+    private long? _selectedReportId;
+    private bool _selectedWasAvailable;
+    private bool _routeInitialized;
+    private string? _activeCaseId;
+    private readonly CancellationTokenSource _lifetime = new();
+    private CancellationTokenSource? _routeCancellation;
+    private Task _refreshTask = Task.CompletedTask;
+    private Task _pollingTask = Task.CompletedTask;
+    private bool _disposed;
     private bool _loading = true;
     private bool _busy;
     private int _page = 1;
@@ -358,16 +408,189 @@ else
 
     private ObservationRow? FirstUnmapped => _detail?.Observations.FirstOrDefault(o => !o.CodeMapped);
 
-    protected override async Task OnParametersSetAsync()
+    protected override Task OnParametersSetAsync()
     {
+        if (_disposed || (_routeInitialized && _activeCaseId == CaseId))
+            return Task.CompletedTask;
+
+        _routeInitialized = true;
+        _activeCaseId = CaseId;
+        _routeCancellation?.Cancel();
+        _routeCancellation?.Dispose();
+        _routeCancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         _loading = true;
-        _detail = await CaseService.GetReviewAsync(CaseId);
+        _apiReview = null;
+        _reviewError = null;
+        _reviewNotice = null;
+        _selectedReportId = null;
+        _selectedWasAvailable = false;
+        _detail = null;
         _page = 1;
         _editingKey = null;
         _showReturn = false;
-        _highlightKey = _detail?.ImportantResults.FirstOrDefault()?.Key;
-        _loading = false;
+        _highlightKey = null;
+
+        if (CaseId is not null)
+        {
+            if (!long.TryParse(CaseId, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var reportId))
+            {
+                _reviewError = "病例編號格式錯誤，請輸入有效的整數病例編號。";
+                _loading = false;
+                return Task.CompletedTask;
+            }
+
+            _selectedReportId = reportId;
+        }
+
+        return _refreshTask = RefreshAfterAsync(_refreshTask, _selectedReportId, _routeCancellation.Token);
     }
+
+    protected override Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && !_disposed)
+            _pollingTask = PollAsync(_lifetime.Token);
+
+        return Task.CompletedTask;
+    }
+
+    private async Task PollAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                await InvokeAsync(async () =>
+                {
+                    if (_disposed || !_refreshTask.IsCompleted || (_activeCaseId is not null && _selectedReportId is null))
+                        return;
+
+                    var routeToken = _routeCancellation!.Token;
+                    var routeReportId = _activeCaseId is null ? null : _selectedReportId;
+                    await (_refreshTask = RefreshAfterAsync(Task.CompletedTask, routeReportId, routeToken));
+                    if (!routeToken.IsCancellationRequested)
+                        await InvokeAsync(StateHasChanged);
+                });
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private async Task RefreshAfterAsync(Task previous, long? routeReportId, CancellationToken cancellationToken)
+    {
+        await previous;
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var (pending, pendingError) = await QueryAsync(
+                () => ReviewApi.GetPendingAsync(cancellationToken), cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+
+            ApiReviewDto? detail = null;
+            string? detailError = null;
+            if (routeReportId is { } reportId)
+                (detail, detailError) = await QueryAsync(
+                    () => ReviewApi.GetByIdAsync(reportId, cancellationToken), cancellationToken);
+
+            cancellationToken.ThrowIfCancellationRequested();
+            if (pending is not null)
+            {
+                _pendingReviews = pending;
+                _hasPendingSnapshot = true;
+            }
+
+            if (routeReportId is not null && detailError is null)
+            {
+                SetReview(detail, "找不到待覆核病例");
+            }
+            else if (routeReportId is null && pending is not null)
+            {
+                _selectedReportId ??= pending.FirstOrDefault()?.ReportId;
+                SetReview(pending.FirstOrDefault(item => item.ReportId == _selectedReportId),
+                    "目前沒有待覆核的病例");
+            }
+
+            var error = pendingError ?? detailError;
+            _reviewError = error is null ? null
+                : $"同步失敗。{error}{(_hasPendingSnapshot || _apiReview is not null ? "畫面可能包含上次成功取得的資料。" : "")}";
+            _loading = false;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+    }
+
+    private static async Task<(T? Value, string? Error)> QueryAsync<T>(
+        Func<Task<T>> query, CancellationToken cancellationToken) where T : class?
+    {
+        try
+        {
+            return (await query(), null);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode is { } statusCode)
+        {
+            return (null, $"待覆核 API 查詢失敗（HTTP {(int)statusCode}）。");
+        }
+        catch (HttpRequestException)
+        {
+            return (null, "無法連線至後端待覆核 API。");
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return (null, "連線至後端待覆核 API 逾時。");
+        }
+        catch (JsonException)
+        {
+            return (null, "無法解析待覆核 API 回傳的 JSON 資料。");
+        }
+    }
+
+    private void SetReview(ApiReviewDto? review, string emptyNotice)
+    {
+        _apiReview = review;
+        if (review is not null)
+            _selectedWasAvailable = true;
+
+        _reviewNotice = review is not null ? null : _selectedWasAvailable
+            ? $"病例 {_selectedReportId} 已不在待覆核清單。"
+            : emptyNotice;
+    }
+
+    private void SelectReview(ApiReviewDto item)
+    {
+        if (_activeCaseId is not null)
+        {
+            if (item.ReportId != _selectedReportId)
+                Nav.NavigateTo($"/reviewer/review/{item.ReportId.ToString(CultureInfo.InvariantCulture)}");
+            return;
+        }
+
+        var review = _pendingReviews.FirstOrDefault(candidate => candidate.ReportId == item.ReportId);
+        if (review is null)
+            return;
+
+        _selectedReportId = review.ReportId;
+        SetReview(review, "目前沒有待覆核的病例");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        _disposed = true;
+        _lifetime.Cancel();
+        try
+        {
+            await Task.WhenAll(_pollingTask, _refreshTask);
+        }
+        finally
+        {
+            _routeCancellation?.Dispose();
+            _lifetime.Dispose();
+        }
+    }
+
+    private static string DisplayValue(string? value) => string.IsNullOrWhiteSpace(value) ? "未提供" : value;
 
     private string LineClass(DocLine line)
     {
