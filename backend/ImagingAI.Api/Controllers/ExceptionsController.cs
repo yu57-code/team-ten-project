@@ -1,129 +1,112 @@
-
+using System.Globalization;
 using ImagingAI.Api.Models;
 using ImagingAI.Api.Services;
 using Microsoft.AspNetCore.Mvc;
+using Npgsql;
 
 namespace ImagingAI.Api.Controllers;
 
 [ApiController]
 [Route("api/exceptions")]
-public sealed class ExceptionsController : ControllerBase
+public sealed class ExceptionsController(ExceptionService service, ILogger<ExceptionsController> logger)
+    : ControllerBase
 {
-    private readonly ExceptionService _service;
-
-    public ExceptionsController(ExceptionService service)
-    {
-        _service = service;
-    }
-
-    // 1. 取得所有未結案異常
-    // GET /api/exceptions
     [HttpGet]
-    public IActionResult GetOpenExceptions(
-        [FromQuery] ExceptionCategory? category = null)
+    public Task<IActionResult> GetOpenExceptions(CancellationToken token,
+        [FromQuery] ExceptionCategory? category = null) => QueryAsync(async () =>
     {
-        var items = _service.GetOpenExceptions();
+        var items = await service.GetOpenExceptionsAsync(token);
+        return Ok(category.HasValue ? items.Where(e => e.Category == category.Value).ToList() : items);
+    }, token);
 
-        if (category.HasValue)
-        {
-            items = items
-                .Where(e => e.Category == category.Value)
-                .ToList();
-        }
-
-        return Ok(items);
-    }
-
-    // 2. 取得各分類統計
-    // GET /api/exceptions/summary
     [HttpGet("summary")]
-    public IActionResult GetSummary()
-    {
-        return Ok(_service.GetSummary());
-    }
+    public Task<IActionResult> GetSummary(CancellationToken token) =>
+        QueryAsync(async () => Ok(await service.GetSummaryAsync(token)), token);
 
-    // 3. 取得單筆異常詳細
-    // GET /api/exceptions/EX-001
     [HttpGet("{id}")]
-    public IActionResult GetById(string id)
+    public Task<IActionResult> GetById(string id, CancellationToken token) => QueryAsync(async () =>
     {
-        var item = _service.GetById(id);
+        if (!long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var key) || key <= 0)
+            return NotFound(new { message = "找不到異常紀錄" });
+        var item = await service.GetByIdAsync(key, token);
+        return item is null ? NotFound(new { message = "找不到異常紀錄" }) : Ok(item);
+    }, token);
 
-        if (item is null)
-        {
-            return NotFound(new
-            {
-                message = "找不到異常紀錄"
-            });
-        }
-
-        return Ok(item);
-    }
-
-    // 4. 儲存人工修正
-    // POST /api/exceptions/EX-001/resolve
-    [HttpPost("{id}/resolve")]
-    public IActionResult Resolve(
-        string id,
-        [FromBody] ResolveExceptionRequest request)
-    {
-        if (request.Resolution is null)
-        {
-            return BadRequest(new
-            {
-                message = "請提供修正資料"
-            });
-        }
-
-        var result = _service.Resolve(
-            id,
-            request.Resolution,
-            request.Actor);
-
-        if (!result.Success)
-        {
-            return BadRequest(result);
-        }
-
-        return Ok(result);
-    }
-
-    // 5. 重新驗證
-    // POST /api/exceptions/EX-001/revalidate
     [HttpPost("{id}/revalidate")]
-    public IActionResult Revalidate(
-        string id,
-        [FromBody] RevalidateExceptionRequest request)
+    [HttpPost("{id}/unresolvable")]
+    public IActionResult ReadOnlyOperation(string id) =>
+        StatusCode(501, new ExceptionOperationResponse(false, "目前僅提供唯讀查詢，處置功能尚未開放。"));
+
+    [HttpPost("{id}/resolve")]
+    [RequestSizeLimit(32768)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> Resolve(string id, [FromBody] MrnCorrectionRequest request,
+        [FromServices] MrnCorrectionService corrections, CancellationToken token)
     {
-        var result = _service.Revalidate(
-            id,
-            request.Actor);
-
-        if (!result.Success)
+        Response.Headers.CacheControl = "no-store";
+        if (!long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var key) || key <= 0)
+            return NotFound();
+        try
         {
-            return BadRequest(result);
+            return Ok(await corrections.SaveAsync(key, request,
+                Request.Headers["X-Mrn-Review-Credential"].ToString(), token));
         }
-
-        return Ok(result);
+        catch (MrnCorrectionException error)
+        {
+            return StatusCode(error.StatusCode, new ExceptionOperationResponse(false, error.Message));
+        }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is InvalidDataException or System.Text.Json.JsonException or
+                System.Security.Cryptography.CryptographicException))
+        {
+            return Conflict(new ExceptionOperationResponse(false, "來源或已保存修正版本不一致，請重新載入。"));
+        }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is NpgsqlException or TimeoutException or IOException or UnauthorizedAccessException or InvalidOperationException))
+        {
+            logger.LogWarning("MRN correction save failed ({ErrorType})", error.GetType().Name);
+            return StatusCode(503, new ExceptionOperationResponse(false, "人工修正暫時無法保存，請稍後以相同請求識別碼重試。"));
+        }
     }
 
-    // 6. 標記無法處理
-    // POST /api/exceptions/EX-001/unresolvable
-    [HttpPost("{id}/unresolvable")]
-    public IActionResult MarkUnresolvable(
-        string id,
-        [FromBody] MarkUnresolvableRequest request)
+    [HttpGet("{id}/evidence")]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> GetEvidence(string id, [FromServices] MrnEvidenceService evidence,
+        CancellationToken token)
     {
-        var result = _service.MarkUnresolvable(
-            id,
-            request.Note,
-            request.Actor);
-
-        if (!result.Success)
+        Response.Headers.CacheControl = "no-store";
+        if (!evidence.IsAuthorized(Request.Headers["X-Mrn-Review-Credential"].ToString()))
+            return NotFound();
+        if (!long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var key) || key <= 0)
+            return NotFound();
+        try
         {
-            return BadRequest(result);
+            var result = await evidence.ReadAsync(key, token);
+            return result is null ? NotFound() : Ok(result);
         }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is IOException or InvalidDataException or UnauthorizedAccessException or
+                System.Text.Json.JsonException or KeyNotFoundException or
+                FormatException or System.Security.Cryptography.CryptographicException))
+        {
+            return Conflict(new { message = "來源證據不完整或版本已變更，請重新載入。" });
+        }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is NpgsqlException or TimeoutException or InvalidOperationException))
+        {
+            logger.LogWarning("MRN evidence query failed ({ErrorType})", error.GetType().Name);
+            return StatusCode(503, new { message = "證據暫時無法讀取。" });
+        }
+    }
 
-        return Ok(result);
+    private async Task<IActionResult> QueryAsync(Func<Task<IActionResult>> query, CancellationToken token)
+    {
+        try { return await query(); }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is NpgsqlException or TimeoutException or InvalidOperationException))
+        {
+            logger.LogWarning("Exception queue query failed ({ErrorType})", error.GetType().Name);
+            return StatusCode(503, new { message = "異常資料暫時無法讀取，請稍後再試。" });
+        }
     }
 }

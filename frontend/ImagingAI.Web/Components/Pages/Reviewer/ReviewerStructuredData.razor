@@ -1,0 +1,271 @@
+@page "/reviewer/structured-data"
+
+<PageTitle>結構化資料｜影像病例結構化平台</PageTitle>
+
+@* ---------- 頂部標頭列：使用原生 PageHeader 統一標題大小，並將搜尋框對齊同一排右側 ---------- *@
+<div class="d-flex flex-wrap align-start justify-space-between gap-3">
+    <PageHeader Title="結構化資料" Subtitle="檢視已完成覆核存檔之結構化欄位定案與 TW Core FHIR 寫入結果。" />
+
+    <div class="mt-1" style="width: 280px;">
+        <input class="ia-field" type="text" placeholder="搜尋病例 ID、病歷號、檢查項目"
+               @bind="_searchText" @bind:event="oninput" />
+    </div>
+</div>
+
+@* ---------- 狀態篩選膠囊列 ---------- *@
+<div class="d-flex flex-wrap align-center justify-space-between gap-2 mb-4">
+    <div class="d-flex flex-wrap gap-2">
+        <MudButton Variant="@(_filter == "all" ? Variant.Filled : Variant.Outlined)"
+                   Color="@(_filter == "all" ? Color.Primary : Color.Default)"
+                   DropShadow="false" Size="Size.Small" OnClick="@(() => _filter = "all")">
+            全部（@_items.Count）
+        </MudButton>
+        <MudButton Variant="@(_filter == "fhir" ? Variant.Filled : Variant.Outlined)"
+                   Color="@(_filter == "fhir" ? Color.Primary : Color.Default)"
+                   DropShadow="false" Size="Size.Small" OnClick="@(() => _filter = "fhir")">
+            已寫入 FHIR
+        </MudButton>
+        <MudButton Variant="@(_filter == "local" ? Variant.Filled : Variant.Outlined)"
+                   Color="@(_filter == "local" ? Color.Primary : Color.Default)"
+                   DropShadow="false" Size="Size.Small" OnClick="@(() => _filter = "local")">
+            僅本地存檔
+        </MudButton>
+    </div>
+
+    @if (_listCollapsed)
+    {
+        <MudButton Variant="Variant.Outlined"
+                   Color="Color.Primary"
+                   Size="Size.Small"
+                   StartIcon="@Icons.Material.Outlined.ViewSidebar"
+                   OnClick="@(() => _listCollapsed = false)">
+            展開已存檔清單（@FilteredItems.Count()）
+        </MudButton>
+    }
+</div>
+
+<MudGrid Spacing="3">
+    @* ---------- 左側（可收合）：已存檔病例清單 ---------- *@
+    @if (!_listCollapsed)
+    {
+        <MudItem xs="12" md="4" lg="3">
+            <div class="ia-card pa-4" style="min-height: 560px;">
+                <div class="d-flex align-center justify-space-between mb-3">
+                    <div class="d-flex align-center gap-2">
+                        <h2 class="ia-card-title ma-0">已存檔清單</h2>
+                        <span class="muted small">(@FilteredItems.Count())</span>
+                    </div>
+                    <MudTooltip Text="收合清單以放大檢視區">
+                        <MudIconButton Icon="@Icons.Material.Outlined.KeyboardDoubleArrowLeft"
+                                       Size="Size.Small"
+                                       aria-label="收合已存檔清單"
+                                       OnClick="@(() => _listCollapsed = true)" />
+                    </MudTooltip>
+                </div>
+
+                @if (!FilteredItems.Any())
+                {
+                    <p class="muted small mt-6 text-center">目前尚無符合條件的結構化資料。</p>
+                }
+                else
+                {
+                    <div class="d-flex flex-column gap-2">
+                        @foreach (var item in FilteredItems)
+                        {
+                            var isSelected = _selected?.CaseId == item.CaseId;
+                            <button type="button"
+                                    class="pa-3 rounded-lg"
+                                    style="@($"width: 100%; display: flex; flex-direction: column; align-items: stretch; text-align: left; border: 1px solid {(isSelected ? "#1E3A8A" : "#E5E7EB")}; background-color: {(isSelected ? "#EFF6FF" : "#FFFFFF")}; transition: all 0.15s;")"
+                                    @onclick="() => _selected = item">
+                                @* 第一列：左側病例 ID、右側狀態徽章 *@
+                                <div class="d-flex align-center justify-space-between gap-2">
+                                    <span class="ia-mono" style="font-weight: 700; font-size: 0.88rem; color: #0F172A; white-space: nowrap;">@item.CaseId</span>
+                                    <StatusBadge Tone="@(item.IsFhirSynced ? BadgeTone.Man : BadgeTone.Mute)"
+                                                 Text="@(item.IsFhirSynced ? "FHIR 已寫入" : "已存檔")" />
+                                </div>
+
+                                @* 第二列：報告類型（與上方病例 ID 完美左切齊） *@
+                                <div class="mt-2" style="font-size: 0.94rem; font-weight: 600; color: #1E293B; text-align: left;">
+                                    @item.ReportType
+                                </div>
+
+                                @* 第三列：淡灰分隔線 + 左右對齊的病歷號與存檔時間 *@
+                                <div class="d-flex align-center justify-space-between muted small mt-2 pt-2"
+                                     style="border-top: 1px solid @(isSelected ? "#DBEAFE" : "#F1F5F9"); font-size: 0.78rem;">
+                                    <span class="ia-mono">病歷號：@item.MedicalRecordNumber</span>
+                                    <span class="ia-mono">@item.ArchivedAt.ToString("MM/dd HH:mm")</span>
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+        </MudItem>
+    }
+
+    @* ---------- 右側（清單收合時自動放大為 12 格全寬）：存檔結果詳情檢視器 ---------- *@
+    <MudItem xs="12" md="@(_listCollapsed ? 12 : 8)" lg="@(_listCollapsed ? 12 : 9)">
+        <div class="ia-card pa-5" style="min-height: 560px;">
+            @if (_selected is null)
+            {
+                <div class="d-flex align-center justify-center" style="height: 480px;">
+                    <p class="muted small">點選左側「已存檔清單」以檢視最終結構化欄位與 FHIR 輸出結果。</p>
+                </div>
+            }
+            else
+            {
+                @* 病例基本資訊標頭 *@
+                <div class="d-flex flex-wrap align-center justify-space-between gap-2 pb-3 mb-4"
+                     style="border-bottom: 1px solid #E5E7EB;">
+                    <div>
+                        <div class="d-flex align-center gap-2">
+                            <h2 style="font-size: 1.15rem; font-weight: 700; margin: 0;">@_selected.ReportType</h2>
+                            <span class="ia-mono muted" style="font-size: 0.9rem;">@_selected.CaseId</span>
+                        </div>
+                        <span class="muted small">
+                            病歷號：@_selected.MedicalRecordNumber ・ 存檔時間：@_selected.ArchivedAt.ToString("yyyy/MM/dd HH:mm") ・ 覆核人員：@_selected.ReviewedBy
+                        </span>
+                    </div>
+                    <StatusBadge Tone="@(_selected.IsFhirSynced ? BadgeTone.Man : BadgeTone.Info)"
+                                 Text="@(_selected.IsFhirSynced ? "TW Core 驗證通過並寫入" : "已完成本地結構化存檔")" />
+                </div>
+
+                @* ---------- 明顯的分段切換按鈕組 ---------- *@
+                <div class="d-inline-flex flex-wrap gap-2 pa-1 rounded-lg mb-4"
+                     style="background-color: #F1F5F9; border: 1px solid #E2E8F0;"
+                     role="tablist" aria-label="檢視模式切換">
+                    <MudButton Variant="@(_activeView == "fields" ? Variant.Filled : Variant.Outlined)"
+                               Color="@(_activeView == "fields" ? Color.Primary : Color.Default)"
+                               DropShadow="false"
+                               Size="Size.Medium"
+                               StartIcon="@Icons.Material.Outlined.TableChart"
+                               Style="@(_activeView == "fields" ? "font-weight: 600;" : "background-color: #FFFFFF; border-color: #CBD5E1; color: #334155; font-weight: 500;")"
+                               OnClick="@(() => _activeView = "fields")">
+                        結構化欄位定案
+                    </MudButton>
+
+                    <MudButton Variant="@(_activeView == "fhir" ? Variant.Filled : Variant.Outlined)"
+                               Color="@(_activeView == "fhir" ? Color.Primary : Color.Default)"
+                               DropShadow="false"
+                               Size="Size.Medium"
+                               StartIcon="@Icons.Material.Outlined.DataObject"
+                               Style="@(_activeView == "fhir" ? "font-weight: 600;" : "background-color: #FFFFFF; border-color: #CBD5E1; color: #334155; font-weight: 500;")"
+                               OnClick="@(() => _activeView = "fhir")">
+                        TW Core FHIR 資源
+                    </MudButton>
+                </div>
+
+                @* ---------- 分頁內容顯示區 ---------- *@
+                @if (_activeView == "fields")
+                {
+                    <MudSimpleTable Dense="false" Hover="true" Style="border: 1px solid #E5E7EB;">
+                        <thead>
+                            <tr>
+                                <th style="width: 28%;">欄位名稱</th>
+                                <th>最終定案內容</th>
+                                <th style="width: 16%;">來源狀態</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var field in _selected.Fields)
+                            {
+                                <tr style="@(field.IsManuallyEdited ? "background-color: #FFFBEB;" : "")">
+                                    <td style="font-weight: 500;">@field.Label</td>
+                                    <td class="ia-mono">@field.Value</td>
+                                    <td>
+                                        <StatusBadge Tone="@(field.IsManuallyEdited ? BadgeTone.Warn : BadgeTone.Mute)"
+                                                     Text="@(field.IsManuallyEdited ? "人工校正" : "AI 擷取")" />
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </MudSimpleTable>
+                }
+                else
+                {
+                    <div class="d-flex justify-space-between align-center mb-2">
+                        <span class="muted small">格式標準：HL7 FHIR R4（TW Core IG）</span>
+                        <span class="muted small">ResourceType: Bundle</span>
+                    </div>
+                    <pre class="pa-4 rounded-lg ia-mono"
+                         style="background-color: #F8FAFC; border: 1px solid #E2E8F0; font-size: 0.85rem; overflow-x: auto; max-height: 420px;">@_selected.FhirJson</pre>
+                }
+            }
+        </div>
+    </MudItem>
+</MudGrid>
+
+@code {
+    private string _filter = "all";
+    private string _searchText = string.Empty;
+    private string _activeView = "fields";
+    private bool _listCollapsed;
+    private ArchivedCaseViewModel? _selected;
+
+    private readonly List<ArchivedCaseViewModel> _items =
+    [
+        new(
+            CaseId: "CASE-2026-001",
+            MedicalRecordNumber: "P1029384",
+            ReportType: "心導管檢查報告",
+            ArchivedAt: DateTime.Now.AddHours(-2),
+            ReviewedBy: "醫療/資料審核人員",
+            IsFhirSynced: true,
+            Fields:
+            [
+                new("檢查日期", "2026-11-22", false),
+                new("臨床診斷", "Coronary artery disease, single vessel", false),
+                new("左前降支（LAD）狹窄程度", "75% stenosis at mid-LAD", true),
+                new("左迴旋支（LCX）", "Patent, no significant stenosis", false),
+                new("右冠狀動脈（RCA）", "Mild luminal irregularity (<30%)", false),
+                new("處置建議", "Suggest PCI with drug-eluting stent to mid-LAD", true)
+            ],
+            FhirJson: @"{
+  ""resourceType"": ""Bundle"",
+  ""type"": ""transaction"",
+  ""meta"": {
+    ""profile"": [""https://twcore.mohw.gov.tw/ig/twcore/StructureDefinition/Bundle-twcore""]
+  },
+  ""entry"": [
+    {
+      ""resource"": {
+        ""resourceType"": ""DiagnosticReport"",
+        ""status"": ""final"",
+        ""code"": { ""text"": ""心導管檢查報告"" },
+        ""conclusion"": ""75% stenosis at mid-LAD; Suggest PCI.""
+      }
+    }
+  ]
+}"
+        )
+    ];
+
+    private IEnumerable<ArchivedCaseViewModel> FilteredItems => _items.Where(item =>
+    {
+        if (_filter == "fhir" && !item.IsFhirSynced) return false;
+        if (_filter == "local" && item.IsFhirSynced) return false;
+
+        if (string.IsNullOrWhiteSpace(_searchText)) return true;
+        var kw = _searchText.Trim();
+        return item.CaseId.Contains(kw, StringComparison.OrdinalIgnoreCase)
+            || item.MedicalRecordNumber.Contains(kw, StringComparison.OrdinalIgnoreCase)
+            || item.ReportType.Contains(kw, StringComparison.OrdinalIgnoreCase);
+    });
+
+    protected override void OnInitialized()
+    {
+        _selected = _items.FirstOrDefault();
+    }
+
+    private sealed record ArchivedCaseViewModel(
+        string CaseId,
+        string MedicalRecordNumber,
+        string ReportType,
+        DateTime ArchivedAt,
+        string ReviewedBy,
+        bool IsFhirSynced,
+        List<StructuredFieldItem> Fields,
+        string FhirJson);
+
+    private sealed record StructuredFieldItem(string Label, string Value, bool IsManuallyEdited);
+}

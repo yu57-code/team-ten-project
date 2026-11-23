@@ -3,15 +3,46 @@
 @inject IAuthService Auth
 @inject NavigationManager Nav
 
-<aside class="ia-sidebar">
+<aside class="ia-sidebar @(_isCollapsed ? "is-collapsed" : "")">
     <div class="ia-brand">
-        <div class="ia-brand-logo" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
-        </div>
-        <div>
-            <div class="ia-brand-name">影像病例結構化平台</div>
-            <div class="ia-brand-sub">@Subtitle</div>
-        </div>
+        @if (!_isCollapsed)
+        {
+            <div class="ia-brand-left">
+                <div class="ia-brand-logo" aria-hidden="true">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2" /></svg>
+                </div>
+                <div class="ia-brand-titles">
+                    <div class="ia-brand-name">影像病例結構化平台</div>
+                    <div class="ia-brand-sub">@Subtitle</div>
+                </div>
+            </div>
+        }
+
+        <!-- 仿 Gemini 右上角收合／展開側邊欄按鈕 -->
+        <button type="button"
+                class="ia-collapse-btn"
+                @onclick="ToggleSidebar"
+                aria-label="@(_isCollapsed ? "展開側邊欄" : "收合側邊欄")"
+                title="@(_isCollapsed ? "展開側邊欄" : "收合側邊欄")">
+            @if (_isCollapsed)
+            {
+                <!-- 展開圖示 -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M9 3v18" />
+                    <path d="m14 9 3 3-3 3" />
+                </svg>
+            }
+            else
+            {
+                <!-- 收合圖示（與 Gemini 右上角完全一致的側欄圖示） -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M9 3v18" />
+                    <path d="m16 15-3-3 3-3" />
+                </svg>
+            }
+        </button>
     </div>
 
     <MudNavMenu Class="ia-nav">
@@ -30,11 +61,14 @@
     <div class="ia-sidebar-spacer"></div>
 
     <div class="ia-userbox">
-        <MudAvatar Class="ia-avatar">@User.AvatarText</MudAvatar>
-        <div class="ia-user-meta">
-            <div class="ia-user-name">@User.DisplayName</div>
-            <div class="ia-user-sub">@User.Username・@(User.MfaEnabled ? "MFA 已驗證" : "MFA 未驗證")</div>
-        </div>
+        @if (!_isCollapsed)
+        {
+            <MudAvatar Class="ia-avatar">@User.AvatarText</MudAvatar>
+            <div class="ia-user-meta">
+                <div class="ia-user-name">@User.DisplayName</div>
+                <div class="ia-user-sub">@User.Username・@(User.MfaEnabled ? "MFA 已驗證" : "MFA 未驗證")</div>
+            </div>
+        }
         <MudIconButton Icon="@Icons.Material.Outlined.Logout"
                        Size="Size.Small"
                        Class="ia-logout"
@@ -51,6 +85,10 @@
     [Parameter, EditorRequired] public IReadOnlyList<NavItem> Items { get; set; } = [];
 
     [Parameter, EditorRequired] public UserAccount User { get; set; } = default!;
+
+    private bool _isCollapsed;
+
+    private void ToggleSidebar() => _isCollapsed = !_isCollapsed;
 
     private static string BadgeClass(NavItem item) =>
         item.BadgeTone == NavBadgeTone.Purple ? "ia-nav-badge ia-nav-badge--purple" : "ia-nav-badge ia-nav-badge--red";

@@ -19,9 +19,7 @@
 }
 else if (_detail is null)
 {
-    <PageHeader Title="待覆核" Subtitle="病例基本資料（唯讀）">
-        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
-    </PageHeader>
+    <PageHeader Title="待覆核" Subtitle="病例基本資料（唯讀）" />
     @if (_reviewError is not null)
     {
         <MudAlert Severity="Severity.Error">@_reviewError</MudAlert>
@@ -66,7 +64,6 @@ else if (_detail is null)
 else
 {
     <PageHeader Title="@($"{_detail.CaseId}・{_detail.ReportType}")">
-        <Breadcrumb><a href="/reviewer">總覽</a>　/　待覆核</Breadcrumb>
         <TitleAddon>
             <StatusBadge Tone="StatusStyles.Tone(_detail.Status)" Text="@StatusText" />
         </TitleAddon>
