@@ -1,5 +1,5 @@
 /* =========================================================================
-   1. 基礎設定與微軟 Blazor 預設樣式
+1. 基礎設定與微軟 Blazor 預設樣式
    ========================================================================= */
 
 html, body {
@@ -55,7 +55,7 @@ h1:focus {
 }
 
 /* =========================================================================
-   2. 影像病例結構化平台 — 共用主題變數與版面框架
+2. 影像病例結構化平台 — 共用主題變數與版面框架
    ========================================================================= */
 
 :root {
@@ -253,6 +253,7 @@ h1:focus {
     margin-right: 0 !important;
     margin-inline-end: 0 !important;
 }
+
 /* ---------- 側邊欄未選中項目：圖示與文字皆維持純白（高對比） ---------- */
 .ia-sidebar .mud-nav-link:not(.active),
 .ia-sidebar .mud-nav-link:not(.active) .ia-nav-text,
@@ -266,23 +267,7 @@ h1:focus {
     border-radius: 10px !important;
 }
 
-/* ---------- 目前所在頁面（Active）：純白底色＋深色文字與圖示 ---------- */
-.ia-sidebar .mud-nav-link.active,
-.ia-sidebar .mud-nav-link.active:hover {
-    background-color: #FFFFFF !important;
-    color: var(--ia-side-active) !important;
-    font-weight: 700 !important;
-    border-radius: 10px !important;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15) !important;
-}
-
-.ia-sidebar .mud-nav-link.active .ia-nav-text,
-.ia-sidebar .mud-nav-link.active .mud-nav-link-text,
-.ia-sidebar .mud-nav-link.active .mud-nav-link-icon {
-    color: var(--ia-side-active) !important;
-}
-
-/* ---------- 目前所在頁面（Active）：恢復純白底色＋深色高對比文字與圖示 ---------- */
+/* ---------- 目前所在頁面（Active）：純白底色＋深色高對比文字與圖示 ---------- */
 .ia-sidebar .mud-nav-link.active,
 .ia-sidebar .mud-nav-link.active:hover {
     background-color: #FFFFFF !important;
@@ -310,7 +295,7 @@ h1:focus {
     padding-right: 0 !important;
 }
 
-/* 右側主內容區：獨立捲動，完全不影響左側欄 */
+/* 右側主內容區：獨立捲動，使用 block 排版避免 Flexbox 壓縮卡片與表格高度 */
 .ia-main {
     flex: 1;
     min-width: 0;
@@ -318,9 +303,11 @@ h1:focus {
     overflow-y: auto !important;
     box-sizing: border-box;
     padding: 32px 40px 48px;
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+    display: block;
+}
+
+.ia-main > * + * {
+    margin-top: 24px;
 }
 
 /* ---------- 頁首 ---------- */
@@ -378,6 +365,7 @@ h1:focus {
     border: 1px solid var(--ia-border);
     border-radius: 14px;
     box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    flex-shrink: 0;
 }
 
 .ia-card-title {
