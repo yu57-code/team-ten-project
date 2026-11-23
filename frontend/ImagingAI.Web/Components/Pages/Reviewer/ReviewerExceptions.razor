@@ -1,4 +1,3 @@
-
 @page "/reviewer/exceptions"
 
 @inject IExceptionService ExceptionService
@@ -199,6 +198,12 @@ else
                                     </td>
                                 </tr>
                             }
+                            @if (_selected.Comparisons.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="4" class="empty">尚無欄位比對明細</td>
+                                </tr>
+                            }
                         </tbody>
                     </table>
                 </div>
@@ -210,7 +215,7 @@ else
                     <div class="fix-fields">
                         <div class="fix-field">
                             <label class="ia-label" for="fix-value">
-                                @(IsMrnMismatch ? "人工確認 MRN" : _selected.FixLabel)
+                                @((IsMrnMismatch || _selected.FixLabel == "唯讀異常資料") ? "修正後病歷號" : _selected.FixLabel)
                             </label>
 
                             <input id="fix-value"
