@@ -8,6 +8,7 @@ using MudBlazor;
 using MudBlazor.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddSingleton<LocalDevelopmentAccess>();
 
 // ==========================================
 // 1. Blazor 與 MudBlazor
@@ -64,7 +65,11 @@ builder.Services.AddHttpClient<
         client.BaseAddress = new Uri(
             builder.Configuration["ApiSettings:BaseUrl"]
             ?? "http://localhost:5142/");
-    });
+    }).ConfigurePrimaryHttpMessageHandler(services =>
+    {
+        var access = services.GetRequiredService<LocalDevelopmentAccess>();
+        return builder.Environment.IsDevelopment() ? access.CreateHandler() : new SocketsHttpHandler();
+    }).RedactLoggedHeaders(_ => true);
 
 // ==========================================
 // 4. 其他 Mock 服務
@@ -137,6 +142,7 @@ Console.WriteLine("=========================");
 // ==========================================
 
 var app = builder.Build();
+app.Services.GetRequiredService<LocalDevelopmentAccess>().Install(app);
 
 // ==========================================
 // 8. HTTP Middleware

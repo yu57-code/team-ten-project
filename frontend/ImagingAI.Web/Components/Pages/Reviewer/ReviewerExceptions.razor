@@ -1,9 +1,11 @@
 
 @page "/reviewer/exceptions"
+@implements IAsyncDisposable
 
 @inject IExceptionService ExceptionService
 @inject IAuthService Auth
 @inject ISnackbar Snackbar
+@inject NavigationManager Navigation
 
 <PageTitle>異常佇列｜影像病例結構化平台</PageTitle>
 
@@ -20,7 +22,7 @@
 {
     <MudProgressLinear Indeterminate="true" Color="Color.Primary" />
 }
-else if (_items.Count == 0)
+else if (_items.Count == 0 && _selected is null)
 {
     <div class="ia-card empty-card">
         <MudIcon Icon="@Icons.Material.Outlined.TaskAlt"
@@ -116,6 +118,17 @@ else
 
                 @if (_selected.Code == "MRN_MISMATCH")
                 {
+                    <div class="reason" role="status">
+                        <b>病例處理進度：</b>@ExceptionText.CaseProcessingLabel(_selected.CaseProcessingStatus)
+                    </div>
+                    @if (_progressError is not null)
+                    {
+                        <p role="alert">@_progressError</p>
+                    }
+                    @if (_revalidationError is not null)
+                    {
+                        <p role="alert">@_revalidationError</p>
+                    }
                     <div class="reason">
                         <MudButton OnClick="LoadMrnEvidenceAsync" Disabled="@(_evidenceLoading || _busy || _pendingCorrection is not null)" Variant="Variant.Outlined">
                             @(_evidenceLoading ? "載入中…" : "查看 MRN 比對內容")
@@ -298,7 +311,7 @@ else
 
                     <div class="fix-actions">
                         <span class="muted small">
-                            目前僅開放 MRN 不一致的人工修正保存；重新驗證與無法處理尚未開放。
+                            目前僅開放 MRN 不一致的人工修正與重新驗證；無法處理尚未開放。
                         </span>
 
                         <div class="buttons">
@@ -316,12 +329,12 @@ else
                                            Color="Color.Primary"
                                            DropShadow="false"
                                            Class="ia-btn"
-                                           Disabled="true"
+                                            Disabled="@(!CanRevalidateMrn)"
                                            OnClick="RevalidateAsync">
-                                    重新驗證
+                                    @(_busy ? "驗證中…" : _pendingRevalidation is null ? "重新驗證" : "重試重新驗證")
                                 </MudButton>
                             }
-                            else
+                            else if (_selected.Status == ExceptionStatus.Pending)
                             {
                                 <MudButton Variant="Variant.Filled"
                                            Color="Color.Tertiary"
@@ -344,6 +357,12 @@ else
     [SupplyParameterFromQuery(Name = "case")]
     public string? CaseFromQuery { get; set; }
 
+    [SupplyParameterFromQuery(Name = "exception")]
+    public string? ExceptionFromQuery { get; set; }
+
+    [SupplyParameterFromQuery(Name = "revalidateRequest")]
+    public string? RevalidationRequestFromQuery { get; set; }
+
     private IReadOnlyList<ExceptionItem>? _items;
     private ExceptionItem? _selected;
     private ExceptionCategory? _category;
@@ -359,6 +378,11 @@ else
     private MrnCorrectionReason? _reason;
     private readonly HashSet<MrnEvidenceReference> _confirmedSources = [];
     private MrnCorrectionRequest? _pendingCorrection;
+    private MrnRevalidationRequest? _pendingRevalidation;
+    private Guid? _retryRevalidationId;
+    private string? _revalidationError;
+    private string? _progressError;
+    private CancellationTokenSource? _progressPoll;
     private bool IsMrnMismatch => _selected?.Code == "MRN_MISMATCH";
     private bool DraftLocked => !IsMrnMismatch || _busy || IsPendingRevalidation || _pendingCorrection is not null;
     private bool CanSaveMrnCorrection => IsMrnMismatch && !_busy && !_evidenceLoading &&
@@ -367,6 +391,7 @@ else
          (_mrnEvidence?.CurrentCorrectionVersion is >= 0 && _evidenceError is null && _reason.HasValue &&
           !string.IsNullOrWhiteSpace(_fixValue) && _fixValue.Length <= 50 &&
           !string.IsNullOrWhiteSpace(_note) && _note.Length <= 2000 && _confirmedSources.Count > 0));
+    private bool CanRevalidateMrn => ExceptionText.CanRevalidate(_selected, _busy) && !_evidenceLoading;
 
     private void ConfirmSource(MrnEvidenceReference reference, bool confirmed)
     {
@@ -432,7 +457,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAsync(preferCaseId: CaseFromQuery);
+        await LoadAsync(preferExceptionId: ExceptionFromQuery, preferCaseId: CaseFromQuery);
     }
 
     private async Task LoadAsync(
@@ -441,20 +466,27 @@ else
     {
         _items = await ExceptionService.GetOpenExceptionsAsync();
 
-        var next =
-            (preferExceptionId is null
-                ? null
-                : _items.FirstOrDefault(e => e.Id == preferExceptionId))
-            ??
-            (preferCaseId is null
-                ? null
-                : _items.FirstOrDefault(e => e.CaseId == preferCaseId))
-            ??
-            FilteredItems.FirstOrDefault();
+        ExceptionItem? next = null;
+        if (!string.IsNullOrWhiteSpace(preferExceptionId))
+        {
+            next = _items.FirstOrDefault(e => e.Id == preferExceptionId)
+                ?? await ExceptionService.GetExceptionAsync(preferExceptionId);
+        }
+        next ??= preferCaseId is null ? null : _items.FirstOrDefault(e => e.CaseId == preferCaseId);
+        next ??= FilteredItems.FirstOrDefault();
 
         if (next is not null)
         {
             Select(next);
+            if (Guid.TryParse(RevalidationRequestFromQuery, out var retryId) &&
+                next.Status == ExceptionStatus.FixedPendingRevalidation &&
+                next.CaseProcessingStatus == "MRN_REVIEW_REQUIRED")
+                _retryRevalidationId = retryId;
+            if (next.CaseProcessingStatus is "MRN_REVALIDATED" or "MRN_DEID_PROCESSING")
+            {
+                SetReviewUri(next.Id, null);
+                StartProgressPolling(next.Id);
+            }
         }
         else
         {
@@ -488,6 +520,7 @@ else
     {
         ClearMrnDraft();
         _selected = item;
+        SetReviewUri(item.Id, null);
         _fixValue = item.Code == "MRN_MISMATCH" ? string.Empty : item.FixValue;
         _merge = false;
         _note = item.Code == "MRN_MISMATCH" ? string.Empty : item.ResolutionNote ?? string.Empty;
@@ -495,6 +528,7 @@ else
 
     private void ClearMrnDraft()
     {
+        StopProgressPolling();
         ++_evidenceRequest;
         _mrnEvidence = null;
         _evidenceError = null;
@@ -502,6 +536,10 @@ else
         _reason = null;
         _confirmedSources.Clear();
         _pendingCorrection = null;
+        _pendingRevalidation = null;
+        _retryRevalidationId = null;
+        _revalidationError = null;
+        _progressError = null;
         _fixValue = string.Empty;
         _merge = false;
         _note = string.Empty;
@@ -578,10 +616,167 @@ else
         }
     }
 
-    private Task RevalidateAsync()
+    private async Task RevalidateAsync()
     {
-        Snackbar.Add("重新驗證尚未開放。", Severity.Info);
-        return Task.CompletedTask;
+        if (!CanRevalidateMrn || _selected is null) return;
+        var id = _selected.Id;
+        _busy = true;
+        _revalidationError = null;
+        _progressError = null;
+        try
+        {
+            if (_mrnEvidence is null || _mrnEvidence.ReportId != _selected.CaseId ||
+                _mrnEvidence.CurrentCorrectionVersion is null or < 1 || _mrnEvidence.LastCorrectionRequestId is null)
+            {
+                var evidenceResult = await ExceptionService.GetMrnEvidenceAsync(id);
+                if (evidenceResult.Evidence is null || evidenceResult.Error is not null ||
+                    evidenceResult.Evidence.ReportId != _selected.CaseId ||
+                    evidenceResult.Evidence.CurrentCorrectionVersion is null or < 1 ||
+                    evidenceResult.Evidence.LastCorrectionRequestId is null)
+                {
+                    _revalidationError = evidenceResult.Error ?? "無法取得最新人工修正來源，請重新載入異常。";
+                    return;
+                }
+                _mrnEvidence = evidenceResult.Evidence;
+            }
+
+            var evidence = _mrnEvidence;
+            _pendingRevalidation ??= new MrnRevalidationRequest(
+                _retryRevalidationId ?? Guid.NewGuid(), evidence.CurrentCorrectionVersion!.Value,
+                evidence.LastCorrectionRequestId!.Value, evidence.OcrAttemptId,
+                evidence.OriginalSha256, evidence.CandidateSha256);
+            SetReviewUri(id, _pendingRevalidation.RequestId);
+
+            var result = await ExceptionService.RevalidateMrnAsync(id, _pendingRevalidation);
+            if (result.Response is { Success: true } response)
+            {
+                _pendingRevalidation = null;
+                _retryRevalidationId = null;
+                SetReviewUri(id, null);
+                if (response.Passed)
+                {
+                    _selected.Status = ExceptionStatus.Resolved;
+                    _selected.CaseProcessingStatus = "MRN_REVALIDATED";
+                    Snackbar.Add("MRN 重新驗證通過，已排入背景恢復；去識別化尚未完成。", Severity.Success);
+                    StartProgressPolling(id);
+                }
+                else
+                {
+                    _selected.Status = ExceptionStatus.FixedPendingRevalidation;
+                    _selected.CaseProcessingStatus = response.ProcessingStatus;
+                    _revalidationError = $"重新驗證未通過（{response.Code}），病例仍維持阻擋。";
+                    Snackbar.Add(_revalidationError, Severity.Warning);
+                }
+                await RefreshSelectedDetailAsync(id);
+            }
+            else
+            {
+                _revalidationError = result.Message;
+                Snackbar.Add(result.Message, Severity.Error);
+                if (!result.OutcomeUnknown)
+                {
+                    _pendingRevalidation = null;
+                    _retryRevalidationId = null;
+                    SetReviewUri(id, null);
+                    if (result.StatusCode is 404 or 409) await RefreshSelectedDetailAsync(id);
+                }
+            }
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or InvalidOperationException)
+        {
+            _revalidationError = "重新驗證結果尚未確認；請使用相同請求識別碼重試。";
+            Snackbar.Add(_revalidationError, Severity.Error);
+            if (_pendingRevalidation is not null) SetReviewUri(id, _pendingRevalidation.RequestId);
+        }
+        finally
+        {
+            _busy = false;
+        }
+    }
+
+    private async Task RefreshSelectedDetailAsync(string id)
+    {
+        var detail = await ExceptionService.GetExceptionAsync(id);
+        if (_selected?.Id == id && detail is not null) _selected = detail;
+        _items = await ExceptionService.GetOpenExceptionsAsync();
+    }
+
+    private void SetReviewUri(string exceptionId, Guid? requestId)
+    {
+        var uri = Navigation.ToAbsoluteUri("/reviewer/exceptions").ToString();
+        var query = new Dictionary<string, string?> { ["exception"] = exceptionId };
+        if (requestId.HasValue) query["revalidateRequest"] = requestId.Value.ToString("D");
+        var target = Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(uri, query);
+        Navigation.NavigateTo(target, replace: true);
+    }
+
+    private void StartProgressPolling(string exceptionId)
+    {
+        StopProgressPolling();
+        _progressError = null;
+        _progressPoll = new CancellationTokenSource();
+        _ = PollResumeStatusAsync(exceptionId, _progressPoll.Token);
+    }
+
+    private void StopProgressPolling()
+    {
+        if (_progressPoll is null) return;
+        _progressPoll.Cancel();
+        _progressPoll.Dispose();
+        _progressPoll = null;
+    }
+
+    private async Task PollResumeStatusAsync(string exceptionId, CancellationToken token)
+    {
+        try
+        {
+            for (var attempt = 0; attempt < 600; attempt++)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(3), token);
+                var detail = await ExceptionService.GetExceptionAsync(exceptionId);
+                if (token.IsCancellationRequested || _selected?.Id != exceptionId) return;
+                if (detail is null)
+                {
+                    _progressError = "無法查詢背景恢復狀態；重新整理頁面可再次查詢。";
+                    return;
+                }
+                _selected = detail;
+                if (detail.CaseProcessingStatus == "PENDING_REVIEW")
+                {
+                    _progressError = null;
+                    Snackbar.Add("去識別化與重新 OCR 驗證已完成，病例進入待人工覆核。", Severity.Success);
+                    return;
+                }
+                if (detail.CaseProcessingStatus is "DEID_FAILED" or "DEID_VERIFICATION_FAILED" or "MRN_REVIEW_REQUIRED")
+                {
+                    _progressError = ExceptionText.CaseProcessingLabel(detail.CaseProcessingStatus);
+                    return;
+                }
+                if (detail.CaseProcessingStatus is not ("MRN_REVALIDATED" or "MRN_DEID_PROCESSING"))
+                {
+                    _progressError = ExceptionText.CaseProcessingLabel(detail.CaseProcessingStatus);
+                    return;
+                }
+                await InvokeAsync(StateHasChanged);
+            }
+            _progressError = "背景處理仍在進行；可重新整理頁面查詢最新狀態。";
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error) when (error is HttpRequestException or InvalidOperationException)
+        {
+            if (!token.IsCancellationRequested) _progressError = "背景狀態查詢暫時失敗；可重新整理頁面重試。";
+        }
+        finally
+        {
+            if (!token.IsCancellationRequested) await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        StopProgressPolling();
+        return ValueTask.CompletedTask;
     }
 
     private Task MarkUnresolvableAsync()

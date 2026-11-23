@@ -75,7 +75,7 @@ public sealed class MrnCorrectionService(IMrnCorrectionAccess access, IMrnCorrec
 
     internal static MrnCorrectionException Conflict() => new(409, "來源、狀態或修正版本已變更，請重新載入。");
 
-    private static MrnCorrectionRequest Validate(MrnCorrectionRequest request)
+    internal static MrnCorrectionRequest Validate(MrnCorrectionRequest request)
     {
         if (request is null || request.RequestId == Guid.Empty || request.OcrAttemptId == Guid.Empty ||
             request.ExpectedCorrectionVersion < 0 || !Enum.IsDefined(request.Reason) ||
@@ -96,7 +96,7 @@ public sealed class MrnCorrectionService(IMrnCorrectionAccess access, IMrnCorrec
         };
     }
 
-    private static void CheckEvidence(MrnCorrectionRequest request, MrnEvidence evidence)
+    internal static void CheckEvidence(MrnCorrectionRequest request, MrnEvidence evidence)
     {
         if (request.OcrAttemptId != evidence.OcrAttemptId ||
             !string.Equals(request.OriginalSha256, evidence.OriginalSha256, StringComparison.OrdinalIgnoreCase) ||

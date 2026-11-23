@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using ImagingAI.Api.Data;
+using ImagingAI.Api.Models;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -18,6 +19,7 @@ public sealed class PdfOcrWorker(
     IExtractedFieldsStore fieldsStore,
     ILogger<PdfOcrWorker> logger) : BackgroundService
 {
+    private bool mrnResumeSqlFailed;
     private const long WorkerLock = 6152456921939523001L;
     private const string ImageWorkingPdfName = "source_image.pdf";
 
@@ -68,6 +70,10 @@ public sealed class PdfOcrWorker(
             {
                 return;
             }
+            catch (MrnResumeLeaseLostException)
+            {
+                // A failed session must leave the current queue iteration before handling other work.
+            }
             catch (PostgresException exception) when (exception.SqlState == PostgresErrorCodes.InsufficientPrivilege)
             {
                 logger.LogError("OCR worker stopped due to PostgreSQL permissions ({SqlState})", exception.SqlState);
@@ -99,6 +105,10 @@ public sealed class PdfOcrWorker(
 
         try
         {
+            if (deidEnabled && await ProcessMrnResumeNextAsync(scope.ServiceProvider, connection,
+                    uploader, onlyCase, powerShell, deidScript, python, deidPython, timeout, cancellationToken))
+                return true;
+
             long caseId;
             string storageUri;
             string status;
@@ -178,6 +188,110 @@ public sealed class PdfOcrWorker(
                 await release.ExecuteNonQueryAsync(CancellationToken.None);
             }
         }
+    }
+
+    private async Task<bool> ProcessMrnResumeNextAsync(IServiceProvider services, NpgsqlConnection connection,
+        long uploader, long? onlyCase, string powerShell, string deidScript, string ocrPython, string deidPython,
+        TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        if (mrnResumeSqlFailed || !environment.IsDevelopment() || !configuration.GetValue("MrnReview:Enabled", false)) return false;
+        var credential = configuration["MrnReview:TestCredential"];
+        if (string.IsNullOrWhiteSpace(credential) || credential.Length < 32 ||
+            !services.GetRequiredService<IMrnCorrectionAccess>().IsAuthorized(credential)) return false;
+        var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
+        if (allowed.Length == 0) return false;
+
+        var resume = services.GetRequiredService<MrnResumeService>();
+        await resume.RepairPublishedAsync(connection, uploader, onlyCase, cancellationToken,
+            async (reportId, runId, token) =>
+            {
+                try { await CheckResumeLeaseAsync(connection, WorkerLock, runId, token); }
+                catch (MrnResumeLeaseLostException error)
+                {
+                    LogResumeLeaseFailure(reportId, error);
+                    throw;
+                }
+            });
+
+        var candidates = new List<(long ExceptionId, long ReportId)>();
+        await using (var next = new NpgsqlCommand("""
+            SELECT DISTINCT e.exception_id, r.report_id,
+                CASE WHEN r.processing_status='MRN_REVALIDATED' THEN 0 ELSE 1 END AS priority
+            FROM system.exception_queue e
+            JOIN clinical.clinical_report r ON r.report_id=e.report_id
+            JOIN system.review_record v ON v.report_id=r.report_id
+                AND v.review_status='MRN_REVALIDATION_PASSED'
+                AND (v.review_comment::jsonb ->> 'exceptionId')=e.exception_id::text
+            WHERE r.uploaded_by=@uploader AND NOT r.is_deleted
+              AND r.processing_status IN ('MRN_REVALIDATED','MRN_DEID_PROCESSING')
+              AND r.report_id=ANY(@allowed) AND (@case IS NULL OR r.report_id=@case)
+              AND e.exception_category='MRN_MISMATCH' AND e.status='RESOLVED'
+              AND (v.review_comment::jsonb -> 'result' ->> 'passed')='true'
+              AND (v.review_comment::jsonb -> 'result' ->> 'resumeQueued')='true'
+              AND NOT EXISTS (
+                  SELECT 1 FROM system.review_record stopped
+                  WHERE stopped.report_id=r.report_id AND stopped.review_status='MRN_RESUME_STOPPED'
+                    AND (stopped.review_comment::jsonb ->> 'jobId')=
+                        (v.review_comment::jsonb -> 'result' ->> 'resumeJobId')
+              )
+            ORDER BY priority, r.report_id, e.exception_id
+            """, connection))
+        {
+            next.Parameters.AddWithValue("uploader", uploader);
+            next.Parameters.AddWithValue("allowed", allowed);
+            next.Parameters.AddWithValue("case", NpgsqlTypes.NpgsqlDbType.Bigint,
+                (object?)onlyCase ?? DBNull.Value);
+            await using var row = await next.ExecuteReaderAsync(cancellationToken);
+            while (await row.ReadAsync(cancellationToken))
+                candidates.Add((row.GetInt64(0), row.GetInt64(1)));
+        }
+
+        foreach (var (exceptionId, reportId) in candidates)
+        {
+            var lockKey = ResumeLockKey(reportId);
+            await using (var claim = new NpgsqlCommand("SELECT pg_try_advisory_lock(@key)", connection))
+            {
+                claim.Parameters.AddWithValue("key", lockKey);
+                if (await claim.ExecuteScalarAsync(cancellationToken) is not true) continue;
+            }
+
+            try
+            {
+                if (await resume.ProcessAsync(exceptionId,
+                        (work, correction, directory, token) => RunMrnResumeDeidAsync(work, correction, directory,
+                            powerShell, deidScript, ocrPython, deidPython, timeout, token),
+                        cancellationToken, (runId, token) => CheckResumeLeaseAsync(connection, lockKey, runId, token)))
+                    return true;
+            }
+            catch (MrnResumeLeaseLostException error)
+            {
+                LogResumeLeaseFailure(reportId, error);
+                throw;
+            }
+            finally
+            {
+                if (connection.State == System.Data.ConnectionState.Open)
+                {
+                    await using var release = new NpgsqlCommand("SELECT pg_advisory_unlock(@key)", connection);
+                    release.Parameters.AddWithValue("key", lockKey);
+                    await release.ExecuteNonQueryAsync(CancellationToken.None);
+                }
+            }
+        }
+        return false;
+    }
+
+    private void LogResumeLeaseFailure(long reportId, MrnResumeLeaseLostException error)
+    {
+        logger.LogWarning("MRN resume lease check failed for report {ReportId}, run {RunId}: {ErrorType} ({SqlState})",
+            reportId, error.RunId, error.Kind, error.SqlState);
+        if (error.Kind == "SqlError") mrnResumeSqlFailed = true;
+    }
+
+    private static long ResumeLockKey(long reportId)
+    {
+        var input = System.Text.Encoding.UTF8.GetBytes($"MRN-RESUME:{reportId.ToString(CultureInfo.InvariantCulture)}");
+        return BitConverter.ToInt64(System.Security.Cryptography.SHA256.HashData(input), 0);
     }
 
     private static async Task<bool> SetStatusAsync(NpgsqlConnection connection, long caseId,
@@ -377,37 +491,9 @@ public sealed class PdfOcrWorker(
                 var attempt = Path.Combine(source, "deid", Guid.NewGuid().ToString("N"));
                 Directory.CreateDirectory(attempt);
                 PrivateJsonFieldsStore.RestrictAttemptDirectory(attempt);
-                var expected = Path.Combine(attempt, "expected_pii.json");
-                var known = new List<object>();
-                foreach (var (field, entity) in new[] { ("mrn", "MRN"), ("patient_name", "PATIENT_NAME") })
-                {
-                    foreach (var candidate in extraction.GetProperty("fields").GetProperty(field)
-                                 .GetProperty("candidates").EnumerateArray())
-                    {
-                        var value = candidate.GetProperty("value").GetString();
-                        if (!string.IsNullOrWhiteSpace(value))
-                            known.Add(new { value, kind = "full", entity_type = entity });
-                    }
-                }
-
-                try
-                {
-                    await File.WriteAllTextAsync(expected, JsonSerializer.Serialize(new { known_values = known }),
-                        cancellationToken);
-                    exitCode = await RunProcessAsync(powerShell, Path.GetDirectoryName(script)!,
-                        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
-                         "-Pdf", pdf, "-PdfOcrJsonPath", ocr, "-PdfPageImageDir", Path.Combine(source, "pages"),
-                         "-ResultDirectory", attempt, "-Name", "result", "-OcrPython", ocrPython,
-                         "-DeidPython", deidPython, "-ExpectedPii", expected], timeout, cancellationToken);
-                }
-                finally
-                {
-                    try { File.Delete(expected); }
-                    catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                    {
-                        logger.LogWarning("De-identification temporary cleanup failed for case {CaseId}", caseId);
-                    }
-                }
+                exitCode = await RunDeidPipelineAsync(powerShell, script, pdf, ocr,
+                    Path.Combine(source, "pages"), attempt, extraction, [], ocrPython, deidPython,
+                    timeout, resumeProcessTree: false, cancellationToken);
 
                 if (exitCode == 0)
                 {
@@ -504,6 +590,15 @@ public sealed class PdfOcrWorker(
     private static async Task VerifyAndPublishDeidAsync(string attempt, string source, int pageCount,
         CancellationToken cancellationToken)
     {
+        await ValidateDeidResultAsync(attempt, pageCount, cancellationToken);
+        var pointer = Path.Combine(attempt, "current.txt");
+        await File.WriteAllTextAsync(pointer, Path.GetFileName(attempt), cancellationToken);
+        File.Move(pointer, Path.Combine(source, "deid", "current.txt"), overwrite: true);
+    }
+
+    internal static async Task ValidateDeidResultAsync(string attempt, int pageCount,
+        CancellationToken cancellationToken)
+    {
         var resultPath = Path.Combine(attempt, "result_deidentified.json");
         using var json = JsonDocument.Parse(await File.ReadAllTextAsync(resultPath, cancellationToken));
         var result = json.RootElement;
@@ -523,9 +618,131 @@ public sealed class PdfOcrWorker(
             if (!File.Exists(Path.Combine(images, $"page_{page:D3}.png")))
                 throw new InvalidDataException();
         }
-        var pointer = Path.Combine(attempt, "current.txt");
-        await File.WriteAllTextAsync(pointer, Path.GetFileName(attempt), cancellationToken);
-        File.Move(pointer, Path.Combine(source, "deid", "current.txt"), overwrite: true);
+    }
+
+    private async Task RunMrnResumeDeidAsync(MrnResumeWork work, ProtectedMrnCorrection correction,
+        string resultDirectory, string powerShell, string script, string ocrPython, string deidPython,
+        TimeSpan timeout, CancellationToken cancellationToken)
+    {
+        var caseDirectory = CaseDirectory(work.ReportId);
+        var currentAttempt = (await File.ReadAllTextAsync(Path.Combine(caseDirectory, "current.txt"), cancellationToken)).Trim();
+        if (!Guid.TryParseExact(currentAttempt, "N", out var currentId) || currentId != work.OcrAttemptId)
+            throw new InvalidDataException("OCR source attempt changed");
+        var source = Path.Combine(caseDirectory, work.OcrAttemptId.ToString("N"));
+        var ocr = Path.Combine(source, "ocr_result.json");
+        var fieldsPath = Path.Combine(source, "extracted_fields.json");
+        using var fields = JsonDocument.Parse(await File.ReadAllBytesAsync(fieldsPath, cancellationToken));
+        var extraction = fields.RootElement;
+        var batch = OcrCandidateBatch.Read(extraction, work.ReportId, work.OcrAttemptId.ToString("N"));
+        if (batch.MrnValidation != "MRN_MISMATCH" ||
+            !string.Equals(batch.PayloadHash, work.CandidateSha256, StringComparison.Ordinal))
+            throw new InvalidDataException("OCR candidate source changed");
+        using var raw = JsonDocument.Parse(await File.ReadAllBytesAsync(ocr, cancellationToken));
+        var pageCount = raw.RootElement.GetProperty("total_pages").GetInt32();
+        if (pageCount < 1 || raw.RootElement.GetProperty("pages").GetArrayLength() != pageCount)
+            throw new InvalidDataException("OCR page source is invalid");
+
+        var upload = ResolveUploadPath(work.StorageUri);
+        var pdf = Path.GetExtension(upload) == ".pdf" ? upload : Path.Combine(source, ImageWorkingPdfName);
+        if (!File.Exists(pdf)) throw new FileNotFoundException();
+        var protectedMrnPath = Path.Combine(environment.ContentRootPath, "PrivateUploads",
+            work.ReportId.ToString(CultureInfo.InvariantCulture) + ".mrn.protected");
+        var uploadedMrn = dataProtection.CreateProtector("ImagingAI.Upload.Mrn.v1")
+            .Unprotect(await File.ReadAllTextAsync(protectedMrnPath, cancellationToken)).Trim();
+        var extraMrns = new[] { uploadedMrn, correction.Request.ConfirmedMrn };
+
+        var exit = await RunDeidPipelineAsync(powerShell, script, pdf, ocr, Path.Combine(source, "pages"),
+            resultDirectory, extraction, extraMrns, ocrPython, deidPython, timeout,
+            resumeProcessTree: true, cancellationToken);
+        if (exit != 0) throw new InvalidDataException("De-identification process did not complete successfully");
+    }
+
+    public static async Task CheckResumeLeaseAsync(NpgsqlConnection connection, long key, Guid? runId,
+        CancellationToken token)
+    {
+        try
+        {
+            await using var check = new NpgsqlCommand("""
+                SELECT EXISTS (
+                    SELECT 1 FROM pg_locks
+                    WHERE locktype='advisory' AND pid=pg_backend_pid() AND granted AND objsubid=1
+                      AND ((classid::bigint << 32) | objid::bigint) = @key
+                )
+                """, connection);
+            check.Parameters.AddWithValue("key", key);
+            if (await check.ExecuteScalarAsync(token) is not true)
+                throw new MrnResumeLeaseLostException("LockMissing", runId);
+        }
+        catch (PostgresException error)
+        {
+            var connectionError = error.SqlState.StartsWith("08", StringComparison.Ordinal) ||
+                error.SqlState is "57P01" or "57P02" or "57P03";
+            throw new MrnResumeLeaseLostException(connectionError ? "ConnectionError" : "SqlError",
+                runId, error.SqlState);
+        }
+        catch (Exception error) when (error is NpgsqlException or InvalidOperationException or TimeoutException)
+        {
+            token.ThrowIfCancellationRequested();
+            throw new MrnResumeLeaseLostException("ConnectionError", runId);
+        }
+    }
+
+    private async Task<int> RunDeidPipelineAsync(string powerShell, string script, string pdf, string ocr,
+        string pageImageDirectory, string resultDirectory, JsonElement extraction,
+        IReadOnlyCollection<string> additionalMrns, string ocrPython, string deidPython,
+        TimeSpan timeout, bool resumeProcessTree, CancellationToken cancellationToken)
+    {
+        var expected = Path.Combine(resultDirectory, "expected_pii.json");
+        var known = BuildKnownPii(extraction, additionalMrns);
+        try
+        {
+            await File.WriteAllTextAsync(expected, JsonSerializer.Serialize(new { known_values = known }), cancellationToken);
+            var arguments = new[]
+            {
+                "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script,
+                "-Pdf", pdf, "-PdfOcrJsonPath", ocr, "-PdfPageImageDir", pageImageDirectory,
+                "-ResultDirectory", resultDirectory, "-Name", "result", "-OcrPython", ocrPython,
+                "-DeidPython", deidPython, "-ExpectedPii", expected
+            };
+            return resumeProcessTree
+                ? await LocalDeidProcessRunner.RunAsync(powerShell, Path.GetDirectoryName(script)!, arguments,
+                    timeout, cancellationToken)
+                : await RunProcessAsync(powerShell, Path.GetDirectoryName(script)!, arguments, timeout, cancellationToken);
+        }
+        finally
+        {
+            try { File.Delete(expected); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { logger.LogWarning("De-identification temporary cleanup failed for case {CaseId}", extraction.TryGetProperty("case_id", out var caseId) ? caseId.GetString() : "unknown"); }
+        }
+    }
+
+    private static List<object> BuildKnownPii(JsonElement extraction, IEnumerable<string> additionalMrns)
+    {
+        var known = new List<object>();
+        var unique = new HashSet<(string Value, string Entity)>(StringTupleComparer.Ordinal);
+        foreach (var (field, entity) in new[] { ("mrn", "MRN"), ("patient_name", "PATIENT_NAME") })
+        {
+            foreach (var candidate in extraction.GetProperty("fields").GetProperty(field)
+                         .GetProperty("candidates").EnumerateArray())
+            {
+                var value = candidate.GetProperty("value").GetString();
+                if (!string.IsNullOrWhiteSpace(value) && unique.Add((value, entity)))
+                    known.Add(new { value, kind = "full", entity_type = entity });
+            }
+        }
+        foreach (var value in additionalMrns.Where(value => !string.IsNullOrWhiteSpace(value)).Distinct(StringComparer.Ordinal))
+            if (unique.Add((value, "MRN"))) known.Add(new { value, kind = "full", entity_type = "MRN" });
+        return known;
+    }
+
+    private sealed class StringTupleComparer : IEqualityComparer<(string Value, string Entity)>
+    {
+        public static readonly StringTupleComparer Ordinal = new();
+        public bool Equals((string Value, string Entity) x, (string Value, string Entity) y) =>
+            StringComparer.Ordinal.Equals(x.Value, y.Value) && StringComparer.Ordinal.Equals(x.Entity, y.Entity);
+        public int GetHashCode((string Value, string Entity) value) =>
+            HashCode.Combine(StringComparer.Ordinal.GetHashCode(value.Value), StringComparer.Ordinal.GetHashCode(value.Entity));
     }
 
     private async Task<int> RunOcrAsync(long caseId, string storageUri, string python,

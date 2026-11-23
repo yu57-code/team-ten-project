@@ -32,10 +32,50 @@ public sealed class ExceptionsController(ExceptionService service, ILogger<Excep
         return item is null ? NotFound(new { message = "找不到異常紀錄" }) : Ok(item);
     }, token);
 
-    [HttpPost("{id}/revalidate")]
     [HttpPost("{id}/unresolvable")]
     public IActionResult ReadOnlyOperation(string id) =>
         StatusCode(501, new ExceptionOperationResponse(false, "目前僅提供唯讀查詢，處置功能尚未開放。"));
+
+    [HttpPost("{id}/revalidate")]
+    [RequestSizeLimit(16384)]
+    [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
+    public async Task<IActionResult> Revalidate(string id, [FromBody] MrnRevalidationRequest request,
+        [FromServices] MrnRevalidationService revalidation, CancellationToken token)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!long.TryParse(id, NumberStyles.None, CultureInfo.InvariantCulture, out var key) || key <= 0)
+            return NotFound(new { success = false, code = "NOT_AVAILABLE", message = "找不到可重新驗證的異常。" });
+        try
+        {
+            var (result, status) = await revalidation.RevalidateAsync(key, request,
+                Request.Headers["X-Mrn-Review-Credential"].ToString(), token);
+            return StatusCode(status, result);
+        }
+        catch (MrnWorkflowException error)
+        {
+            var message = error.Code switch
+            {
+                "INVALID_REQUEST" => "重新驗證請求格式無效。",
+                "VERSION_CONFLICT" or "STATE_CONFLICT" => "來源或修正版本已變更，請重新載入。",
+                "CORRECTION_REQUIRED" => "尚無可重新驗證的人工修正。",
+                "REQUEST_CONFLICT" or "HISTORY_CONFLICT" => "請求識別碼已用於不同內容，請重新載入。",
+                _ => "此異常目前無法重新驗證。"
+            };
+            return StatusCode(error.Status, new { success = false, code = error.Code, message });
+        }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is InvalidDataException or System.Text.Json.JsonException or System.Security.Cryptography.CryptographicException))
+        {
+            logger.LogWarning("MRN revalidation source integrity check failed ({ErrorType})", error.GetType().Name);
+            return Conflict(new { success = false, code = "SOURCE_INTEGRITY_FAILED", message = "保存的來源證據不一致，病例仍維持阻擋。" });
+        }
+        catch (Exception error) when (!token.IsCancellationRequested &&
+            (error is NpgsqlException or TimeoutException or IOException or UnauthorizedAccessException or InvalidOperationException))
+        {
+            logger.LogWarning("MRN revalidation failed ({ErrorType})", error.GetType().Name);
+            return StatusCode(503, new { success = false, code = "TEMPORARY_FAILURE", message = "重新驗證暫時無法完成；請以相同請求識別碼重試。" });
+        }
+    }
 
     [HttpPost("{id}/resolve")]
     [RequestSizeLimit(32768)]

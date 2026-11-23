@@ -58,6 +58,9 @@ public sealed class ExceptionItem
 
     public ExceptionStatus Status { get; set; }
 
+    // Selected only on the detail endpoint; never includes a private storage path.
+    public string? CaseProcessingStatus { get; set; }
+
     public int FailedStep { get; init; }
 
     public required string RestartFrom { get; init; }

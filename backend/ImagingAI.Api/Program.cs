@@ -57,12 +57,17 @@ builder.Services.AddScoped<IMrnCorrectionAccess>(services => services.GetRequire
 builder.Services.AddScoped<IMrnCorrectionRepository, NpgsqlMrnCorrectionRepository>();
 builder.Services.AddScoped<IProtectedMrnCorrectionStore, ProtectedMrnCorrectionStore>();
 builder.Services.AddScoped<MrnCorrectionService>();
+builder.Services.AddScoped<IMrnWorkflowRepository, MrnWorkflowRepository>();
+builder.Services.AddScoped<MrnSourceCheckpoint>();
+builder.Services.AddScoped<MrnRevalidationService>();
+builder.Services.AddScoped<MrnResumeService>();
 
 // ==========================================
 // 2. 建立應用程式
 // ==========================================
 
 var app = builder.Build();
+LocalReviewAccess.Install(app);
 
 // ==========================================
 // 3. Swagger 設定
