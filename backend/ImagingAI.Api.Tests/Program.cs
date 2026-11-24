@@ -12,7 +12,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging.Abstractions;
 using ImagingAI.Api.Controllers;
 
-// Dependency-free, isolated tests. No connection string, live PostgreSQL or production files.
+// The default suite uses only synthetic fixtures. PostgreSQL tests are explicitly opt-in and target a local temporary cluster.
 var tests = new List<(string Name, Func<Task> Run)>();
 void Test(string name, Func<Task> run) => tests.Add((name, run));
 void Check(bool value) { if (!value) throw new Exception("Assertion failed (sensitive details suppressed)"); }
@@ -226,13 +226,84 @@ Test("Missing_reason_is_not_silently_defaulted", () =>
     return Task.CompletedTask;
 });
 
+if (args.Contains("--isolated-postgres", StringComparer.Ordinal))
+{
+    const string fixture = "Host=127.0.0.1;Port=55484;Database=postgres;Username=isolated_mrn;Pooling=false;Timeout=5";
+
+    Test("postgres_legacy_oid_cast_returns_42846", async () =>
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(fixture);
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand("SELECT classid::numeric FROM pg_locks", connection);
+        try { await command.ExecuteScalarAsync(); }
+        catch (Npgsql.PostgresException error) when (error.SqlState == "42846") { return; }
+        throw new Exception("Expected oid conversion error");
+    });
+
+    foreach (var key in new[] { long.MinValue, -1L, 1L, long.MaxValue })
+    {
+        Test($"postgres_lock_round_trip_{key}", async () =>
+        {
+            await using var first = new Npgsql.NpgsqlConnection(fixture);
+            await using var second = new Npgsql.NpgsqlConnection(fixture);
+            await first.OpenAsync();
+            await second.OpenAsync();
+            async Task<bool> Advisory(Npgsql.NpgsqlConnection connection, string sql)
+            {
+                await using var command = new Npgsql.NpgsqlCommand(sql, connection);
+                command.Parameters.AddWithValue("key", key);
+                return await command.ExecuteScalarAsync() is true;
+            }
+            Check(await Advisory(first, "SELECT pg_try_advisory_lock(@key)"));
+            Check(!await Advisory(second, "SELECT pg_try_advisory_lock(@key)"));
+            await using (var transaction = await first.BeginTransactionAsync())
+            {
+                await PdfOcrWorker.CheckResumeLeaseAsync(first, key, null, default);
+                await transaction.CommitAsync();
+            }
+            for (var i = 0; i < 3; i++)
+                await PdfOcrWorker.CheckResumeLeaseAsync(first, key, null, default);
+            Check(await Advisory(first, "SELECT pg_advisory_unlock(@key)"));
+            await ExpectLeaseFailure(first, key, "LockMissing");
+            Check(await Advisory(second, "SELECT pg_try_advisory_lock(@key)"));
+            await second.CloseAsync();
+            await ExpectLeaseFailure(second, key, "ConnectionError");
+            Check(await Advisory(first, "SELECT pg_try_advisory_lock(@key)"));
+        });
+    }
+
+    Test("postgres_lease_sql_error_reports_sqlstate", async () =>
+    {
+        await using var connection = new Npgsql.NpgsqlConnection(fixture);
+        await connection.OpenAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        await using var command = new Npgsql.NpgsqlCommand("SELECT 1/0", connection, transaction);
+        try { await command.ExecuteScalarAsync(); }
+        catch (Npgsql.PostgresException error) when (error.SqlState == "22012") { }
+        await ExpectLeaseFailure(connection, 1, "SqlError", "25P02");
+        await transaction.RollbackAsync();
+    });
+
+    static async Task ExpectLeaseFailure(Npgsql.NpgsqlConnection connection, long key, string kind, string? state = null)
+    {
+        var runId = Guid.NewGuid();
+        try { await PdfOcrWorker.CheckResumeLeaseAsync(connection, key, runId, default); }
+        catch (MrnResumeLeaseLostException error) when (error.Kind == kind && error.RunId == runId && error.SqlState == state)
+        { return; }
+        throw new Exception("Expected classified lease failure");
+    }
+}
+
 var failures=0;
 foreach(var test in tests)
 {
     try {await test.Run();Console.WriteLine($"PASS {test.Name}");}
     catch(Exception error){failures++;Console.WriteLine($"FAIL {test.Name} ({error.GetType().Name})");}
 }
-Console.WriteLine($"Tests={tests.Count} Passed={tests.Count-failures} Failed={failures}; LiveDatabaseWrites=0");
+var workflowTests = await MrnWorkflowIsolationTests.RunAsync();
+failures += workflowTests.Failed;
+var totalTests = tests.Count + workflowTests.Total;
+Console.WriteLine($"Tests={totalTests} Passed={totalTests-failures} Failed={failures}; LiveDatabaseWrites=0");
 return failures==0?0:1;
 
 sealed class Fixture : IAsyncDisposable

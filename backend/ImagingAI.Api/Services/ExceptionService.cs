@@ -10,18 +10,33 @@ public sealed class ExceptionService(ImagingAiDbContext database)
 {
     public async Task<IReadOnlyList<ExceptionItem>> GetOpenExceptionsAsync(CancellationToken token)
     {
-        var rows = await database.ExceptionQueues.AsNoTracking()
-            .Where(e => e.Status != "RESOLVED" && e.Status != "UNRESOLVABLE")
-            .OrderByDescending(e => e.CreatedAt).ThenByDescending(e => e.ExceptionId)
+        var rows = await (from exception in database.ExceptionQueues.AsNoTracking()
+                          join report in database.ClinicalReports.AsNoTracking()
+                              on exception.ReportId equals report.ReportId
+                          where exception.Status != "RESOLVED" && exception.Status != "UNRESOLVABLE"
+                          orderby exception.CreatedAt descending, exception.ExceptionId descending
+                          select new { Exception = exception, report.ProcessingStatus })
             .ToListAsync(token);
-        return rows.Select(Map).ToList();
+        return rows.Select(row =>
+        {
+            var item = Map(row.Exception);
+            item.CaseProcessingStatus = row.ProcessingStatus;
+            return item;
+        }).ToList();
     }
 
     public async Task<ExceptionItem?> GetByIdAsync(long id, CancellationToken token)
     {
-        var row = await database.ExceptionQueues.AsNoTracking()
-            .SingleOrDefaultAsync(e => e.ExceptionId == id, token);
-        return row is null ? null : Map(row);
+        var result = await (from exception in database.ExceptionQueues.AsNoTracking()
+                            join report in database.ClinicalReports.AsNoTracking()
+                                on exception.ReportId equals report.ReportId
+                            where exception.ExceptionId == id
+                            select new { Exception = exception, report.ProcessingStatus })
+            .SingleOrDefaultAsync(token);
+        if (result is null) return null;
+        var item = Map(result.Exception);
+        item.CaseProcessingStatus = result.ProcessingStatus;
+        return item;
     }
 
     public async Task<object> GetSummaryAsync(CancellationToken token)

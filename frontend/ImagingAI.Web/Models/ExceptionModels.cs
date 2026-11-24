@@ -48,6 +48,9 @@ public sealed class ExceptionItem
 
     public ExceptionStatus Status { get; set; }
 
+    /// <summary>病例處理進度（僅異常詳細 API 提供）。</summary>
+    public string? CaseProcessingStatus { get; set; }
+
     /// <summary>失敗位置：ValidationSteps 的索引。</summary>
     public int FailedStep { get; init; }
 
@@ -101,6 +104,16 @@ public sealed record MrnCorrectionResponse(bool Success, string Message, Guid Re
 public sealed record MrnCorrectionSaveResult(MrnCorrectionResponse? Response, int? StatusCode,
     string Message, bool OutcomeUnknown = false);
 
+public sealed record MrnRevalidationRequest(Guid RequestId, int ExpectedCorrectionVersion,
+    Guid CorrectionRequestId, Guid OcrAttemptId, string OriginalSha256, string CandidateSha256);
+
+public sealed record MrnRevalidationResponse(bool Success, bool Passed, string Message, Guid RequestId,
+    int CorrectionVersion, string Code, string ExceptionStatus, string ProcessingStatus,
+    Guid? ResumeJobId, bool ResumeQueued, bool CloudUploadAllowed);
+
+public sealed record MrnRevalidationCallResult(MrnRevalidationResponse? Response, int? StatusCode,
+    string Message, bool OutcomeUnknown = false);
+
 /// <summary>人工處理異常時送出的內容。</summary>
 public sealed record ExceptionResolution(string FixValue, ExceptionStatus Status, bool MergeIntoExistingPatient, string Note);
 
@@ -129,4 +142,19 @@ public static class ExceptionText
         ExceptionStatus.Unresolvable => "無法處理",
         _ => status.ToString()
     };
+
+    public static string CaseProcessingLabel(string? status) => status switch
+    {
+        "MRN_REVALIDATED" => "MRN 重新驗證通過，已排入背景恢復",
+        "MRN_DEID_PROCESSING" => "Presidio 去識別化與重新 OCR 驗證中",
+        "PENDING_REVIEW" => "去識別化驗證完成，等待人工覆核",
+        "DEID_FAILED" or "DEID_VERIFICATION_FAILED" => "背景去識別化失敗，仍需人工處理",
+        "MRN_REVIEW_REQUIRED" => "病例仍在 MRN 人工確認阻擋",
+        null or "" => "尚未取得病例處理狀態",
+        _ => "病例處理狀態：" + status
+    };
+
+    public static bool CanRevalidate(ExceptionItem? item, bool busy) =>
+        item is { Code: "MRN_MISMATCH", Status: ExceptionStatus.FixedPendingRevalidation } && !busy &&
+        item.CaseProcessingStatus == "MRN_REVIEW_REQUIRED";
 }

@@ -9,6 +9,9 @@ public interface IExceptionService
         Task.FromResult(new MrnEvidenceResult(null, "目前服務未提供 MRN 證據查詢。"));
     Task<MrnCorrectionSaveResult> SaveMrnCorrectionAsync(string exceptionId, MrnCorrectionRequest request) =>
         Task.FromResult(new MrnCorrectionSaveResult(null, 501, "人工修正保存尚未開放。"));
+    Task<ExceptionItem?> GetExceptionAsync(string exceptionId) => Task.FromResult<ExceptionItem?>(null);
+    Task<MrnRevalidationCallResult> RevalidateMrnAsync(string exceptionId, MrnRevalidationRequest request) =>
+        Task.FromResult(new MrnRevalidationCallResult(null, 501, "MRN 重新驗證尚未開放。"));
     /// <summary>尚未結案的異常（依建立時間新到舊）。</summary>
     Task<IReadOnlyList<ExceptionItem>> GetOpenExceptionsAsync();
 

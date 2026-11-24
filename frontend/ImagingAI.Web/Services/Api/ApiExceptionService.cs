@@ -3,17 +3,19 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ImagingAI.Web.Models;
+using ImagingAI.Web.Services;
 using ImagingAI.Web.Services.Interfaces;
 
 namespace ImagingAI.Web.Services.Api;
 
-public sealed class ApiExceptionService(HttpClient http, IConfiguration configuration, IWebHostEnvironment environment)
+public sealed class ApiExceptionService(HttpClient http, IConfiguration configuration, IWebHostEnvironment environment,
+    LocalDevelopmentAccess localAccess)
     : IExceptionService
 {
     public async Task<MrnEvidenceResult> GetMrnEvidenceAsync(string exceptionId)
     {
         var credential = configuration["MrnReview:TestCredential"];
-        if (!environment.IsDevelopment() || !configuration.GetValue("MrnReview:Enabled", false) ||
+        if (!environment.IsDevelopment() || !localAccess.CanForward || !configuration.GetValue("MrnReview:Enabled", false) ||
             string.IsNullOrWhiteSpace(credential) || credential.Length < 32)
             return new(null, "MRN 證據查詢尚未啟用：需在 Development 設定受控測試憑證。此設定須與後端一致。");
         try
@@ -45,7 +47,7 @@ public sealed class ApiExceptionService(HttpClient http, IConfiguration configur
     public async Task<MrnCorrectionSaveResult> SaveMrnCorrectionAsync(string exceptionId, MrnCorrectionRequest request)
     {
         var credential = configuration["MrnReview:TestCredential"];
-        if (!environment.IsDevelopment() || !configuration.GetValue("MrnReview:Enabled", false) ||
+        if (!environment.IsDevelopment() || !localAccess.CanForward || !configuration.GetValue("MrnReview:Enabled", false) ||
             string.IsNullOrWhiteSpace(credential) || credential.Length < 32)
             return new(null, 404, "MRN 修正保存未啟用，請確認 Development 受控設定。");
         try
@@ -77,6 +79,66 @@ public sealed class ApiExceptionService(HttpClient http, IConfiguration configur
         catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
         {
             return new(null, null, "保存結果尚未確認，請使用相同請求重試，勿另建修正。", true);
+        }
+    }
+
+    public async Task<ExceptionItem?> GetExceptionAsync(string exceptionId)
+    {
+        try
+        {
+            using var response = await http.GetAsync($"api/exceptions/{Uri.EscapeDataString(exceptionId)}");
+            if (!response.IsSuccessStatusCode) return null;
+            var item = await response.Content.ReadFromJsonAsync<ExceptionItem>(JsonOptions);
+            return item?.Id == exceptionId ? item : null;
+        }
+        catch (Exception error) when (error is HttpRequestException or JsonException or OperationCanceledException)
+        {
+            return null;
+        }
+    }
+
+    public async Task<MrnRevalidationCallResult> RevalidateMrnAsync(string exceptionId,
+        MrnRevalidationRequest request)
+    {
+        var credential = configuration["MrnReview:TestCredential"];
+        if (!environment.IsDevelopment() || !localAccess.CanForward ||
+            !configuration.GetValue("MrnReview:Enabled", false) ||
+            string.IsNullOrWhiteSpace(credential) || credential.Length < 32)
+            return new(null, 404, "MRN 重新驗證僅能在受控的 Development 本機環境使用。");
+        try
+        {
+            using var message = new HttpRequestMessage(HttpMethod.Post,
+                $"api/exceptions/{Uri.EscapeDataString(exceptionId)}/revalidate");
+            message.Headers.Add("X-Mrn-Review-Credential", credential);
+            message.Content = JsonContent.Create(request, options: JsonOptions);
+            using var response = await http.SendAsync(message);
+            var status = (int)response.StatusCode;
+            if (!response.IsSuccessStatusCode)
+                return new(null, status, status switch
+                {
+                    400 => "重新驗證請求格式無效，請重新載入證據。",
+                    404 => "此異常無法重新驗證，請確認 Development 允許病例與審核設定。",
+                    409 => "修正版本或來源已變更，請重新載入證據。",
+                    501 => "後端尚未開放重新驗證。",
+                    _ => "重新驗證結果尚未確認；請以相同請求識別碼重試。"
+                }, status is not (400 or 404 or 409 or 501));
+
+            var result = await response.Content.ReadFromJsonAsync<MrnRevalidationResponse>(JsonOptions);
+            var valid = result is { Success: true, CloudUploadAllowed: false } &&
+                result.RequestId == request.RequestId && result.CorrectionVersion == request.ExpectedCorrectionVersion;
+            valid = valid && (result!.Passed
+                ? result.Code == "MRN_REVALIDATION_PASSED" && result.ExceptionStatus == "RESOLVED" &&
+                  result.ProcessingStatus == "MRN_REVALIDATED" && result.ResumeQueued && result.ResumeJobId is { } job && job != Guid.Empty
+                : result.ExceptionStatus == "FIXED_PENDING_REVALIDATION" &&
+                  result.ProcessingStatus == "MRN_REVIEW_REQUIRED" && !result.ResumeQueued && result.ResumeJobId is null);
+            if (!valid)
+                return new(null, status, "後端回應與重新驗證契約不符；結果尚未確認，請保留原請求重試。", true);
+            return new(result!, status, result!.Passed ? "重新驗證通過，已排入背景恢復；去識別化尚未完成。" :
+                $"重新驗證未通過（{result.Code}），病例仍維持阻擋。");
+        }
+        catch (Exception error) when (error is HttpRequestException or OperationCanceledException or JsonException)
+        {
+            return new(null, null, "重新驗證結果尚未確認；請以相同請求識別碼重試。", true);
         }
     }
 
