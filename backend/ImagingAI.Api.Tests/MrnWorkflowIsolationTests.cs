@@ -43,7 +43,12 @@ internal static class MrnWorkflowIsolationTests
         foreach (var test in tests)
         {
             try { await test.Run(); Console.WriteLine($"PASS {test.Name}"); }
-            catch (Exception error) { failed++; Console.WriteLine($"FAIL {test.Name} ({error.GetType().Name})"); }
+            catch (Exception error)
+            {
+                failed++;
+                Console.WriteLine($"FAIL {test.Name}");
+                Console.WriteLine(error);
+            }
         }
         return (tests.Length, failed);
     }
@@ -90,14 +95,23 @@ internal static class MrnWorkflowIsolationTests
 
     private static async Task StaleSourceRequests()
     {
-        await using (var f = new WorkflowFixture())
-            await ExpectWorkflow(409, () => f.Revalidate(f.Request with { ExpectedCorrectionVersion = 0 }));
-        await using (var f = new WorkflowFixture())
-            await ExpectWorkflow(409, () => f.Revalidate(f.Request with { CandidateSha256 = new string('C', 64) }));
-        await using (var f = new WorkflowFixture())
-            await ExpectWorkflow(409, () => f.Revalidate(f.Request with { OcrAttemptId = Guid.NewGuid() }));
-        await using (var f = new WorkflowFixture())
-            await ExpectWorkflow(409, () => f.Revalidate(f.Request with { OriginalSha256 = new string('D', 64) }));
+        await RejectWithoutChanges(400, "INVALID_REQUEST", request => request with { ExpectedCorrectionVersion = 0 });
+        await RejectWithoutChanges(409, "VERSION_CONFLICT",
+            request => request with { ExpectedCorrectionVersion = request.ExpectedCorrectionVersion + 1 });
+        await RejectWithoutChanges(409, "VERSION_CONFLICT", request => request with { CandidateSha256 = new string('C', 64) });
+        await RejectWithoutChanges(409, "VERSION_CONFLICT", request => request with { OcrAttemptId = Guid.NewGuid() });
+        await RejectWithoutChanges(409, "VERSION_CONFLICT", request => request with { OriginalSha256 = new string('D', 64) });
+
+        static async Task RejectWithoutChanges(int status, string code,
+            Func<MrnRevalidationRequest, MrnRevalidationRequest> change)
+        {
+            await using var fixture = new WorkflowFixture();
+            await ExpectWorkflow(status, () => fixture.Revalidate(change(fixture.Request)), code);
+            Check(fixture.Repository.ProcessingStatus == "MRN_REVIEW_REQUIRED");
+            Check(fixture.Repository.Status == "FIXED_PENDING_REVALIDATION");
+            Check(fixture.Repository.CommitCount == 0 && fixture.Repository.Validations.Count == 0 &&
+                fixture.Repository.Runs.Count == 0);
+        }
     }
 
     private static async Task CorrectionIntegrity()
@@ -393,10 +407,10 @@ internal static class MrnWorkflowIsolationTests
         return Task.CompletedTask;
     }
 
-    private static async Task ExpectWorkflow(int status, Func<Task<MrnRevalidationResponse>> operation)
+    private static async Task ExpectWorkflow(int status, Func<Task<MrnRevalidationResponse>> operation, string? code = null)
     {
         try { await operation(); throw new Exception("expected workflow rejection"); }
-        catch (MrnWorkflowException error) when (error.Status == status) { }
+        catch (MrnWorkflowException error) when (error.Status == status && (code is null || error.Code == code)) { }
     }
 
     private static void Check(bool value)
@@ -446,7 +460,7 @@ internal static class MrnWorkflowIsolationTests
                 {"mrn":{"candidates":[{"value":"SYNTH-TEST-0202","page":1,"block_id":"block_1","bbox":[1,2,30,40],"confidence":0.99}]},
                  "patient_name":{"candidates":[{"value":"Synthetic Patient","page":1,"block_id":"block_2","bbox":[1,2,30,40],"confidence":0.98}]}}
                 """);
-            var fieldsJson = fields.RootElement.GetProperty("fields");
+            var fieldsJson = fields.RootElement;
             var hash = CandidateHash(fieldsJson);
             var extracted = JsonSerializer.Serialize(new
             {

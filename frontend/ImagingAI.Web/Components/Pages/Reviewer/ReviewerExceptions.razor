@@ -389,7 +389,7 @@ else
         _selected?.Status == ExceptionStatus.Pending &&
         (_pendingCorrection is not null ||
          (_mrnEvidence?.CurrentCorrectionVersion is >= 0 && _evidenceError is null && _reason.HasValue &&
-          !string.IsNullOrWhiteSpace(_fixValue) && _fixValue.Length <= 50 &&
+          !string.IsNullOrWhiteSpace(_fixValue) && _fixValue.Trim().EnumerateRunes().Count() <= 50 &&
           !string.IsNullOrWhiteSpace(_note) && _note.Length <= 2000 && _confirmedSources.Count > 0));
     private bool CanRevalidateMrn => ExceptionText.CanRevalidate(_selected, _busy) && !_evidenceLoading;
 
@@ -559,7 +559,7 @@ else
         var selected = _selected;
         _pendingCorrection ??= new MrnCorrectionRequest(Guid.NewGuid(), _mrnEvidence!.CurrentCorrectionVersion!.Value,
             _mrnEvidence.OcrAttemptId, _mrnEvidence.OriginalSha256, _mrnEvidence.CandidateSha256,
-            _reason!.Value, _fixValue,
+            _reason!.Value, _fixValue.Trim(),
             _confirmedSources.OrderBy(r => r.Page).ThenBy(r => r.BlockId, StringComparer.Ordinal).ToArray(), _note);
         _busy = true;
         try

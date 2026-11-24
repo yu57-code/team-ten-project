@@ -22,7 +22,7 @@ internal static class OcrPatientWriter
         var mrn = ReadSingle(fields, "mrn", minimumConfidence: 0);
         if (mrn is null || !mrn.StartsWith("SYNTH-", StringComparison.Ordinal) ||
             mrn.Length <= "SYNTH-".Length ||
-            !Regex.IsMatch(mrn, @"\A[\p{L}\p{Nd}][\p{L}\p{Nd}._/-]{0,49}\z") ||
+            !MrnFormat.IsValid(mrn) ||
             !string.Equals(mrn, uploadedMrn.Trim(), StringComparison.Ordinal))
             return null;
 

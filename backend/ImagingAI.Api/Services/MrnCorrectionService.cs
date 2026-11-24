@@ -77,10 +77,10 @@ public sealed class MrnCorrectionService(IMrnCorrectionAccess access, IMrnCorrec
 
     internal static MrnCorrectionRequest Validate(MrnCorrectionRequest request)
     {
+        var confirmedMrn = request?.ConfirmedMrn?.Trim() ?? string.Empty;
         if (request is null || request.RequestId == Guid.Empty || request.OcrAttemptId == Guid.Empty ||
             request.ExpectedCorrectionVersion < 0 || !Enum.IsDefined(request.Reason) ||
-            request.ConfirmedMrn is null || !Regex.IsMatch(request.ConfirmedMrn,
-                @"\A[\p{L}\p{Nd}][\p{L}\p{Nd}._/-]{0,49}\z") ||
+            !MrnFormat.IsValid(confirmedMrn) ||
             string.IsNullOrWhiteSpace(request.Note) || request.Note.Length > 2000 ||
             request.EvidenceReferences is null || request.EvidenceReferences.Count is < 1 or > 100 ||
             request.EvidenceReferences.Any(r => r is null || r.Page < 1 || string.IsNullOrWhiteSpace(r.BlockId) || r.BlockId.Length > 200) ||
@@ -89,6 +89,7 @@ public sealed class MrnCorrectionService(IMrnCorrectionAccess access, IMrnCorrec
             throw new MrnCorrectionException(400, "修正內容、MRN 格式或來源參照無效。");
         return request with
         {
+            ConfirmedMrn = confirmedMrn,
             OriginalSha256 = request.OriginalSha256.ToUpperInvariant(),
             CandidateSha256 = request.CandidateSha256.ToUpperInvariant(),
             EvidenceReferences = request.EvidenceReferences.Distinct().OrderBy(r => r.Page)

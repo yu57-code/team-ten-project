@@ -404,8 +404,7 @@ public sealed class PdfOcrWorker(
                 {
                     0 => "MRN_MISSING",
                     > 1 => "MRN_AMBIGUOUS",
-                    _ when !Regex.IsMatch(values[0], @"\A[\p{L}\p{Nd}][\p{L}\p{Nd}._/-]{0,49}\z")
-                        => "MRN_INVALID_FORMAT",
+                    _ when !MrnFormat.IsValid(values[0]) => "MRN_INVALID_FORMAT",
                     _ when !string.Equals(values[0], uploaded, StringComparison.Ordinal) => "MRN_MISMATCH",
                     _ => "MATCH"
                 };

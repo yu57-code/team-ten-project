@@ -2,6 +2,7 @@
 using System.Security.Cryptography;
 using System.Globalization;
 using ImagingAI.Api.Data;
+using ImagingAI.Api.Services;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -56,8 +57,8 @@ public class UploadController(
         }
 
         var mrn = medicalRecordNumber.Trim();
-        if (mrn.Length > 50 || mrn.Any(char.IsControl))
-            return BadRequest(new { message = "病歷號碼長度或格式不符" });
+        if (!MrnFormat.IsValid(mrn))
+            return BadRequest(new { message = "病歷號須為 1～50 字元，首字須為字母或數字，其餘只允許字母、數字及 . _ / -" });
 
         var requestedType = string.IsNullOrWhiteSpace(reportType) ? "自動辨識" : reportType.Trim();
         if (requestedType.Length > 50 || requestedType.Any(char.IsControl))

@@ -102,7 +102,14 @@ Test("Wrong_report_stage_cannot_be_changed", async () =>
 Test("Invalid_MRN_is_rejected", async () =>
 {
     await using var f = new Fixture();
-    await Reject(400, () => f.Save(f.Request with { ConfirmedMrn = "invalid value" }));
+    foreach (var invalid in new[] { "invalid value", "#001", "AB#001", new string('A', 51) })
+        await Reject(400, () => f.Save(f.Request with { ConfirmedMrn = invalid }));
+});
+Test("Correction_trims_MRN_before_evidence_comparison", async () =>
+{
+    await using var f = new Fixture();
+    var result = await f.Save(f.Request with { ConfirmedMrn = $"  {f.Request.ConfirmedMrn}\t" });
+    Check(result.Success);
 });
 Test("Reason_must_match_source", async () =>
 {
