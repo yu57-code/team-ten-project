@@ -37,6 +37,35 @@ else
             </p>
         </SubtitleContent>
         <Actions>
+            @if (_pendingIds.Count > 1)
+            {
+                <div class="queue-switcher" role="group" aria-label="切換待覆核病例">
+                    <MudIconButton Icon="@Icons.Material.Outlined.ChevronLeft"
+                                   Size="Size.Small"
+                                   Disabled="@(CurrentQueueIndex <= 0)"
+                                   OnClick="GoPrevCase"
+                                   title="上一筆待覆核病例" />
+                    <select class="queue-select ia-mono"
+                            aria-label="選擇待覆核病例"
+                            value="@_detail.CaseId"
+                            @onchange="OnSelectCaseChanged">
+                        @for (var i = 0; i < _pendingIds.Count; i++)
+                        {
+                            var id = _pendingIds[i];
+                            <option value="@id">@($"{i + 1}/{_pendingIds.Count}・{id}")</option>
+                        }
+                        @if (CurrentQueueIndex < 0)
+                        {
+                            <option value="@_detail.CaseId">@_detail.CaseId</option>
+                        }
+                    </select>
+                    <MudIconButton Icon="@Icons.Material.Outlined.ChevronRight"
+                                   Size="Size.Small"
+                                   Disabled="@(CurrentQueueIndex < 0 || CurrentQueueIndex >= _pendingIds.Count - 1)"
+                                   OnClick="GoNextCase"
+                                   title="下一筆待覆核病例" />
+                </div>
+            }
             @if (!ReadOnly)
             {
                 <MudButton Variant="Variant.Outlined" Class="ia-btn" OnClick="() => _showReturn = !_showReturn">退回異常佇列</MudButton>
@@ -213,15 +242,39 @@ else
                 <div class="ia-table-wrap">
                     <table class="ia-table">
                         <thead>
-                            <tr><th>項目</th><th>數值</th><th>單位</th><th>參考範圍</th><th>旗標</th><th>標準編碼</th></tr>
+                            <tr>
+                                <th>項目</th>
+                                <th>數值</th>
+                                <th>單位</th>
+                                <th>參考範圍</th>
+                                <th>旗標</th>
+                                <th>標準編碼</th>
+                                @if (!ReadOnly)
+                                {
+                                    <th>操作</th>
+                                }
+                            </tr>
                         </thead>
                         <tbody>
                             @foreach (var row in _detail.Observations)
                             {
                                 var flag = StatusStyles.Display(row.Flag);
+                                var isEditing = _editingObsItem == row.Item;
                                 <tr>
                                     <td>@row.Item</td>
-                                    <td>@row.Value</td>
+                                    <td>
+                                        @if (isEditing && !ReadOnly)
+                                        {
+                                            <input class="ia-field obs-input"
+                                                   aria-label="@($"{row.Item} 數值")"
+                                                   @bind="row.Value"
+                                                   @bind:event="oninput" />
+                                        }
+                                        else
+                                        {
+                                            @row.Value
+                                        }
+                                    </td>
                                     <td>@row.Unit</td>
                                     <td>@row.ReferenceRange</td>
                                     <td><StatusBadge Tone="flag.Tone" Text="@flag.Label" /></td>
@@ -238,11 +291,30 @@ else
                                             </button>
                                         }
                                     </td>
+                                    @if (!ReadOnly)
+                                    {
+                                        <td>
+                                            @if (isEditing)
+                                            {
+                                                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false"
+                                                           Class="ia-btn ia-btn--sm" OnClick="() => FinishObsEdit(row)">
+                                                    完成
+                                                </MudButton>
+                                            }
+                                            else
+                                            {
+                                                <MudButton Variant="Variant.Outlined" Class="ia-btn ia-btn--sm"
+                                                           OnClick="() => _editingObsItem = row.Item">
+                                                    編輯
+                                                </MudButton>
+                                            }
+                                        </td>
+                                    }
                                 </tr>
                             }
                             @if (_detail.Observations.Count == 0)
                             {
-                                <tr><td colspan="6" class="empty-row">尚無檢查數值</td></tr>
+                                <tr><td colspan="@(ReadOnly ? 6 : 7)" class="empty-row">尚無檢查數值</td></tr>
                             }
                         </tbody>
                     </table>
@@ -304,15 +376,26 @@ else
     private static readonly Regex MaskPattern = new(@"\[(PERSON|ID|DATE|HOSPITAL)\]", RegexOptions.Compiled);
 
     private CaseReviewDetail? _detail;
+    private IReadOnlyList<string> _pendingIds = [];
     private bool _loading = true;
     private bool _busy;
     private int _page = 1;
     private string? _highlightKey;
     private string? _editingKey;
+    private string? _editingObsItem;
     private bool _showReturn;
     private string _returnReason = string.Empty;
 
     private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+
+    private int CurrentQueueIndex => _detail is null
+        ? -1
+        : _pendingIds
+            .Select((id, idx) => (id, idx))
+            .FirstOrDefault(x => string.Equals(x.id, _detail.CaseId, StringComparison.OrdinalIgnoreCase))
+            .idx is var index && _pendingIds.Count > 0 && string.Equals(_pendingIds[index], _detail.CaseId, StringComparison.OrdinalIgnoreCase)
+            ? index
+            : -1;
 
     private bool ReadOnly => _detail?.Status != CaseStatus.PendingReview;
 
@@ -358,12 +441,41 @@ else
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
+        _pendingIds = await CaseService.GetPendingReviewIdsAsync();
         _detail = await CaseService.GetReviewAsync(CaseId);
         _page = 1;
         _editingKey = null;
+        _editingObsItem = null;
         _showReturn = false;
         _highlightKey = _detail?.ImportantResults.FirstOrDefault()?.Key;
         _loading = false;
+    }
+
+    private void GoPrevCase()
+    {
+        var idx = CurrentQueueIndex;
+        if (idx > 0)
+        {
+            Nav.NavigateTo($"/reviewer/review/{_pendingIds[idx - 1]}");
+        }
+    }
+
+    private void GoNextCase()
+    {
+        var idx = CurrentQueueIndex;
+        if (idx >= 0 && idx < _pendingIds.Count - 1)
+        {
+            Nav.NavigateTo($"/reviewer/review/{_pendingIds[idx + 1]}");
+        }
+    }
+
+    private void OnSelectCaseChanged(ChangeEventArgs e)
+    {
+        var targetId = e.Value?.ToString();
+        if (!string.IsNullOrWhiteSpace(targetId) && !string.Equals(targetId, _detail?.CaseId, StringComparison.OrdinalIgnoreCase))
+        {
+            Nav.NavigateTo($"/reviewer/review/{targetId}");
+        }
     }
 
     private string LineClass(DocLine line)
@@ -420,6 +532,12 @@ else
     {
         _editingKey = null;
         Snackbar.Add($"已修正：{item.Title}（儲存草稿或送出後寫入）", Severity.Info);
+    }
+
+    private void FinishObsEdit(ObservationRow row)
+    {
+        _editingObsItem = null;
+        Snackbar.Add($"已更新 {row.Item} 數值為 {row.Value} {row.Unit}（儲存草稿或送出後寫入）", Severity.Info);
     }
 
     private void MapCode(ObservationRow row)

@@ -28,6 +28,33 @@
     gap: 10px;
 }
 
+/* 多筆待覆核病例切換器 */
+.queue-switcher {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    min-height: 38px;
+    padding: 0 4px;
+    border: 1px solid #CBD2DC;
+    border-radius: 8px;
+    background: #FFFFFF;
+}
+
+.queue-select {
+    height: 32px;
+    padding: 0 8px;
+    border: 0;
+    background: transparent;
+    color: #14244D;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+    .queue-select:focus {
+        outline: none;
+    }
+
 /* 找不到病例 */
 .empty-card {
     display: flex;
@@ -81,13 +108,15 @@
 .layout {
     display: flex;
     flex-wrap: wrap;
-    gap: 18px;
+    gap: 14px;
     align-items: flex-start;
 }
 
 /* ---------- 原始文件 ---------- */
 .doc {
-    flex: 1 1 460px;
+    position: sticky;
+    top: 16px;
+    flex: 1 1 420px;
     min-width: 0;
     overflow: hidden;
 }
@@ -134,20 +163,20 @@
 
 .sheet-wrap {
     margin: 12px 16px 16px;
-    padding: 16px;
+    padding: 14px;
     border-radius: 8px;
     background: #F4F6F9;
 }
 
 .sheet {
-    padding: 28px 30px;
+    padding: 22px 24px;
     border: 1px solid #DCE1E8;
     border-radius: 4px;
     background: #FFFFFF;
     color: #2A3445;
     font-family: Georgia, 'Times New Roman', serif;
     font-size: 13px;
-    line-height: 1.9;
+    line-height: 1.85;
 }
 
 .line.heading {
@@ -227,18 +256,18 @@
 
 /* ---------- 右側區塊 ---------- */
 .right {
-    flex: 1 1 520px;
+    flex: 1.25 1 540px;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 18px;
+    gap: 14px;
 }
 
 .block {
-    padding: 18px 20px;
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
 }
 
 .block--table {
@@ -248,7 +277,7 @@
 }
 
 .pad {
-    padding: 16px 20px 10px;
+    padding: 16px 18px 10px;
 }
 
 .block-head {
@@ -300,8 +329,8 @@
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 10px;
-    padding: 4px 12px 4px 4px;
+    gap: 8px;
+    padding: 6px 12px 6px 6px;
     border: 1px solid #E2E6EC;
     border-radius: 8px;
     background: #FFFFFF;
@@ -313,17 +342,17 @@
     }
 
 .result-text {
-    flex: 1;
+    flex: 1 1 200px;
     min-width: 0;
-    min-height: 44px;
     display: flex;
     flex-direction: column;
+    align-items: flex-start;
     justify-content: center;
     gap: 2px;
 }
 
 .as-link {
-    padding: 0;
+    padding: 4px 0;
     border: 0;
     background: none;
     font-family: inherit;
@@ -340,11 +369,19 @@
 .result-title {
     font-size: 14px;
     font-weight: 600;
+    line-height: 1.4;
 }
 
 .result-src {
     font-size: 12px;
     color: #5A6577;
+}
+
+.obs-input {
+    width: 76px;
+    min-height: 32px;
+    padding: 4px 8px;
+    font-size: 13px;
 }
 
 .map-btn {
@@ -357,6 +394,7 @@
     font-family: inherit;
     font-size: 12px;
     font-weight: 600;
+    white-space: nowrap;
     cursor: pointer;
 }
 
@@ -371,7 +409,7 @@
 
 /* ---------- FHIR ---------- */
 .fhir {
-    padding: 18px 20px;
+    padding: 16px 18px;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -405,6 +443,12 @@
     height: 18px;
     margin-top: 3px;
     color: #A61B1B;
+}
+
+@media (max-width: 960px) {
+    .doc {
+        position: static;
+    }
 }
 
 @media (max-width: 640px) {
