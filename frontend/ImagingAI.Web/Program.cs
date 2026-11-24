@@ -55,8 +55,8 @@ builder.Services.AddHttpClient<IUploadService, ApiUploadService>(
             ?? "http://localhost:5089/");
     });
 
-// 異常佇列 API（保留原本設定）
-// 目前後端 ExceptionService 仍使用 Mock
+// 新增：異常佇列 API
+// 取代原本 MockExceptionService 註冊
 builder.Services.AddHttpClient<
     IExceptionService, ApiExceptionService>(
     client =>
@@ -64,20 +64,6 @@ builder.Services.AddHttpClient<
         client.BaseAddress = new Uri(
             builder.Configuration["ApiSettings:BaseUrl"]
             ?? "http://localhost:5142/");
-    });
-
-// ==========================================
-// 新增：待覆核 API（正式 PostgreSQL 資料）
-// ==========================================
-
-// 使用獨立 API Service，不取代 MockCaseService
-builder.Services.AddHttpClient<
-    IReviewApiService, ApiReviewService>(
-    client =>
-    {
-        client.BaseAddress = new Uri(
-            builder.Configuration["ApiSettings:BaseUrl"]
-            ?? "http://localhost:5089/");
     });
 
 // ==========================================
