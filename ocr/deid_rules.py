@@ -1,6 +1,12 @@
 import re
 
 
+NATIONAL_ID_LABEL = (
+    r"身[分份][證证](?:字[號号]|[號号][碼码]?)?"
+    r"|national\s+id(?:\s+(?:number|no\.?))?"
+)
+
+
 # =====================================================
 # 1. 個資欄位標籤
 #    (標籤正規表示式, 標準標籤文字, 對應個資類型)
@@ -25,7 +31,7 @@ PII_FIELD_LABELS = [
         "MRN",
     ),
     (
-        r"身分證字號|身分證號碼|身分證|national\s+id(?:\s+no\.?)?",
+        NATIONAL_ID_LABEL,
         "身分證字號",
         "TW_NATIONAL_ID",
     ),

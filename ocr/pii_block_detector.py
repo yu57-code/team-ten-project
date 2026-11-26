@@ -14,6 +14,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from itertools import groupby
 from statistics import median
@@ -21,6 +22,7 @@ from statistics import median
 from deid_rules import (
     CRITICAL_LABEL_ENTITIES,
     KEEP_ENTITIES,
+    NATIONAL_ID_LABEL,
     PATIENT_SECTION_RE,
     POLICY_PENDING_ENTITIES,
     SECTION_TITLE_RE,
@@ -47,6 +49,37 @@ LINE_SCAN_ENTITIES = {
 
 LOW_DETECTION_SCORE = 0.7
 LOW_OCR_CONFIDENCE = 0.8
+
+EXACT_NATIONAL_ID_FIELD = re.compile(
+    rf"^\s*(?P<label>{NATIONAL_ID_LABEL})"
+    r"\s*[:：]\s*(?P<value>[A-Z][0-9]{9})\s*$", re.IGNORECASE,
+)
+
+BED_FIELD_LABEL = re.compile(
+    r"^\s*(?:床[號号]|病床[號号]|bed(?:\s+(?:number|no\.?))?)(?=\s*[:：]|\s*$)", re.IGNORECASE,
+)
+STANDALONE_TIMESTAMP = re.compile(
+    r"(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/(\d{1,2})/(\d{4})"
+    r"\s+(AM|PM)\s+(\d{1,2}):(\d{2})", re.IGNORECASE,
+)
+
+
+def is_name_field_boundary(text):
+    if BED_FIELD_LABEL.match(text):
+        return True
+    timestamp = STANDALONE_TIMESTAMP.fullmatch(text.strip())
+    if not timestamp:
+        return False
+    month, day, year, _, hour, minute = timestamp.groups()
+    if not 1 <= int(hour) <= 12 or int(minute) > 59:
+        return False
+    try:
+        month_number = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug",
+                        "sep", "oct", "nov", "dec").index(month.lower()) + 1
+        datetime(int(year), month_number, int(day))
+    except ValueError:
+        return False
+    return True
 
 
 # =====================================================
@@ -200,7 +233,32 @@ class Layout:
 
         return bool(current and current["is_patient"])
 
-    def right_chain(self, anchor, max_blocks=3):
+    def name_fallback_is_other_column(self, anchor, chain):
+        # Apply only to a bare, generic Name label without a recognizer-confirmed value.
+        label = self.labels[anchor["block_id"]]
+        if label[1] != "PERSON" or anchor["text"][label[2]:].strip():
+            return False
+        first = chain[0]
+        height = max(anchor["height"], self.median_height)
+        if (first["bbox"][0] - anchor["bbox"][2] < 3 * height
+                or anchor["center_y"] - first["center_y"] < anchor["height"] * 0.35
+                or not re.fullmatch(r"\d+[.,][A-Za-z]", first["text"].strip())):
+            return False
+
+        # Require evidence of a distinct numeric column both above and below the fragment.
+        neighbors = [
+            block for block in self.blocks
+            if block not in chain and not self.is_label(block)
+            and horizontal_overlap(first, block) >= 0.5
+            and re.search(r"\d", block["text"])
+            and abs(block["center_y"] - first["center_y"]) <= 3 * height
+        ]
+        return (
+            any(block["bbox"][3] <= first["bbox"][1] for block in neighbors)
+            and any(block["bbox"][1] >= first["bbox"][3] for block in neighbors)
+        )
+
+    def right_chain(self, anchor, max_blocks=3, *, name_field=False):
         """
         標籤右側同一列的欄位值，遇到下一個標籤或間距過大即停止。
         """
@@ -222,7 +280,7 @@ class Layout:
 
         for block in candidates:
 
-            if self.is_label(block):
+            if self.is_label(block) or (name_field and is_name_field_boundary(block["text"])):
                 break
 
             # 標籤與欄位值之間可能有欄位對齊空白；欄位值之間必須緊鄰
@@ -239,7 +297,7 @@ class Layout:
 
         return chain
 
-    def below_chain(self, anchor, max_blocks=2):
+    def below_chain(self, anchor, max_blocks=2, *, name_field=False):
         """
         標籤正下方的欄位值（表格欄位或換行的姓名）。
         """
@@ -247,7 +305,7 @@ class Layout:
         # 同列已有下一個欄位時，不把下一列的內容當成目前欄位的值。
         if any(
             block is not anchor
-            and self.is_label(block)
+            and (self.is_label(block) or (name_field and is_name_field_boundary(block["text"])))
             and 0 <= block["bbox"][0] - anchor["bbox"][2] <= anchor["height"] * 10
             and vertical_overlap(anchor, block) >= 0.5
             for block in self.blocks
@@ -276,7 +334,7 @@ class Layout:
 
             block = min(candidates, key=lambda b: b["bbox"][1])
 
-            if self.is_label(block):
+            if self.is_label(block) or (name_field and is_name_field_boundary(block["text"])):
                 break
 
             chain.append(block)
@@ -344,15 +402,59 @@ def map_span(start, end, segments):
     return mapped
 
 
+def is_krt_measurement_match(layout, row, source_spans):
+    if len(source_spans) != 3 or any(
+        (layout.labels.get(block["block_id"]) or (None, None))[1] == "PHONE_NUMBER"
+        for block in row
+    ):
+        return False
+
+    values = [layout.by_id[block_id] for block_id, _, _ in source_spans]
+    if any(start != 0 or end != len(block["text"])
+           for (_, start, end), block in zip(source_spans, values)):
+        return False
+    if not all(re.fullmatch(r"[+-]?\d{1,3}\.\d{2}", block["text"].strip()) for block in values[:2]):
+        return False
+    axis = values[2]["text"].strip()
+    if not re.fullmatch(r"[0-9]{1,3}", axis) or int(axis) > 180:
+        return False
+
+    height = max(layout.median_height, *(block["height"] for block in values))
+    top = min(block["bbox"][1] for block in values)
+    left = values[0]["bbox"][0]
+    for header_line in layout.lines:
+        headers = [next((
+            header for header in header_line["blocks"]
+            if (
+            header["text"].strip().upper() == expected
+            and value["bbox"][0] <= header["center_x"] <= value["bbox"][2]
+            and 0 < top - header["bbox"][1] <= 4 * height
+            )
+        ), None) for expected, value in zip(("D", "MM", "A"), values)]
+        if any(header is None for header in headers):
+            continue
+        header_top = min(header["bbox"][1] for header in headers)
+        if any(
+            re.fullmatch(r"KRT[.\s]+DATA", anchor["text"].strip(), re.IGNORECASE)
+            and 0 < header_top - anchor["bbox"][1] <= 3 * height
+            and 0 < left - anchor["bbox"][0] <= 5 * height
+            for anchor in layout.blocks
+        ):
+            return True
+    return False
+
+
 # =====================================================
 # 4. 個資區塊偵測
 # =====================================================
 
 class Detector:
 
-    def __init__(self, service):
+    def __init__(self, service, *, page_number=1, stage="original_ocr"):
 
         self.service = service
+        self.page_number = page_number
+        self.stage = stage
 
     def detect(self, blocks):
 
@@ -386,14 +488,17 @@ class Detector:
                 canonical, label_entity = "Patient Name", "PATIENT_NAME"
 
             remainder = block["text"][label_end:]
+            name_field = label_entity in {"PERSON", "PATIENT_NAME"}
 
             parts = [(None, f"{canonical}:", 0)]
 
             if remainder.strip():
                 parts.append((block["block_id"], remainder, label_end))
-                chain = layout.right_chain(block, max_blocks=2)
+                chain = layout.right_chain(block, max_blocks=2, name_field=name_field)
             else:
-                chain = layout.right_chain(block) or layout.below_chain(block)
+                chain = layout.right_chain(block, name_field=name_field) or layout.below_chain(
+                    block, name_field=name_field
+                )
 
             for value_block in chain:
                 parts.append((value_block["block_id"], value_block["text"], 0))
@@ -406,7 +511,8 @@ class Detector:
 
             for result in results:
 
-                for block_id, start, end in map_span(result.start, result.end, segments):
+                source_spans = map_span(result.start, result.end, segments)
+                for block_id, start, end in source_spans:
 
                     found = True
 
@@ -424,6 +530,7 @@ class Detector:
                         layout, block_id, entity, result.score,
                         "label_context", start, end, reasons,
                         label_block_id=block["block_id"],
+                        result=result, source_spans=source_spans,
                     ))
 
             if found:
@@ -431,9 +538,11 @@ class Detector:
 
             # 有標籤但 Presidio 無法確認欄位值：保守遮蔽並標記人工確認
             if remainder.strip():
+                exact_id = EXACT_NATIONAL_ID_FIELD.fullmatch(block["text"]) if label_entity == "TW_NATIONAL_ID" else None
+                start, end = exact_id.span("value") if exact_id else (label_end, len(block["text"]))
                 detections.append(self._detection(
                     layout, block["block_id"], label_entity, 0.5,
-                    "label_fallback", label_end, len(block["text"]),
+                    "label_fallback", start, end,
                     ["LABEL_CONTEXT_ONLY"],
                     label_block_id=block["block_id"],
                 ))
@@ -444,6 +553,8 @@ class Detector:
                     chain if label_entity in {"PATIENT_NAME", "PERSON"}
                     else chain[:1]
                 )
+                if name_field and layout.name_fallback_is_other_column(block, chain):
+                    targets = chain[1:]
 
                 for value_block in targets:
                     detections.append(self._detection(
@@ -498,6 +609,7 @@ class Detector:
                 detections.append(self._detection(
                     layout, block["block_id"], result.entity_type,
                     result.score, "block", result.start, result.end, reasons,
+                    result=result,
                 ))
 
         # ---------- (3) 同一行合併文字（跨區塊） ----------
@@ -522,17 +634,23 @@ class Detector:
                     if result.entity_type not in LINE_SCAN_ENTITIES:
                         continue
 
-                    for block_id, start, end in map_span(result.start, result.end, segments):
+                    source_spans = map_span(result.start, result.end, segments)
+                    if result.entity_type == "PHONE_NUMBER" and is_krt_measurement_match(
+                        layout, line["blocks"], source_spans
+                    ):
+                        continue
+                    for block_id, start, end in source_spans:
                         detections.append(self._detection(
                             layout, block_id, result.entity_type, result.score,
                             "line_context", start, end, [],
+                            result=result, source_spans=source_spans,
                         ))
 
         return layout, detections, review_items, halt_reasons
 
     def _detection(
         self, layout, block_id, entity, score, method,
-        start, end, reasons, label_block_id=None,
+        start, end, reasons, label_block_id=None, *, result=None, source_spans=None,
     ):
 
         block = layout.by_id[block_id]
@@ -550,6 +668,9 @@ class Detector:
         if confidence is not None and confidence < LOW_OCR_CONFIDENCE:
             reasons.append("LOW_OCR_CONFIDENCE")
 
+        metadata = getattr(result, "recognition_metadata", None) or {}
+        recognizer_name = metadata.get("recognizer_name")
+        detected_text = block["text"][start:end]
         return {
             "block_id": block_id,
             "entity_type": entity,
@@ -557,9 +678,20 @@ class Detector:
             "method": method,
             "start": start,
             "end": end,
-            "value": block["text"][start:end],
+            "value": detected_text,
             "label_block_id": label_block_id,
             "review_reasons": reasons,
+            "page_number": self.page_number,
+            "stage": self.stage,
+            "detected_text": detected_text,
+            "recognizer_name": recognizer_name if isinstance(recognizer_name, str) else None,
+            "detection_method": method,
+            "bbox": block["bbox"],
+            "source_spans": [
+                {"block_id": source_id, "start": source_start, "end": source_end,
+                 "bbox": layout.by_id[source_id]["bbox"]}
+                for source_id, source_start, source_end in (source_spans or [(block_id, start, end)])
+            ],
         }
 
 
@@ -693,9 +825,9 @@ def find_document_known_values(detector, layout, blocks, detections, known_value
     return found
 
 
-def build_mask_plan(blocks, service, source_ocr_json=None, document_known_values=None):
+def build_mask_plan(blocks, service, source_ocr_json=None, document_known_values=None, *, page_number=1):
 
-    detector = Detector(service)
+    detector = Detector(service, page_number=page_number)
 
     layout, detections, review_items, halt_reasons = detector.detect(blocks)
 
@@ -761,6 +893,16 @@ def build_mask_plan(blocks, service, source_ocr_json=None, document_known_values
             mask_bbox = value_bbox(block, span_start, span_end)
             reasons.append("PARTIAL_MASK_ESTIMATED")
 
+        exact_id = EXACT_NATIONAL_ID_FIELD.fullmatch(block["text"])
+        protected_left_edge = None
+        if (exact_id and {item["entity_type"] for item in items} == {"TW_NATIONAL_ID"}
+                and (span_start, span_end) == exact_id.span("value")):
+            widths = [char_width(char) for char in block["text"]]
+            x1, _, x2, _ = block["bbox"]
+            protected_left_edge = min(mask_bbox[0], round(
+                x1 + (x2 - x1) * sum(widths[:exact_id.end("label")]) / sum(widths)
+            ))
+
         masks.append({
             "mask_id": f"mask_{index:03d}",
             "block_id": block_id,
@@ -771,6 +913,7 @@ def build_mask_plan(blocks, service, source_ocr_json=None, document_known_values
             "max_score": max(item["score"] for item in items),
             "needs_review": bool(reasons),
             "review_reasons": sorted(set(reasons)),
+            **({"padding_left_limit": protected_left_edge} if protected_left_edge is not None else {}),
         })
 
     if not masks:
@@ -896,7 +1039,7 @@ def main():
 
     print(f"讀取 OCR 區塊：{len(blocks)} 個")
 
-    plan = build_mask_plan(blocks, PresidioService(), args.ocr_json)
+    plan = build_mask_plan(blocks, PresidioService(), args.ocr_json, page_number=args.page or 1)
 
     args.plan.parent.mkdir(parents=True, exist_ok=True)
 
@@ -919,7 +1062,7 @@ def build_document_plans(pages, service, source_ocr_json=None, max_rounds=3):
     """
 
     plans = {
-        page: build_mask_plan(blocks, service, source_ocr_json)
+        page: build_mask_plan(blocks, service, source_ocr_json, page_number=page)
         for page, blocks in pages.items()
     }
 
@@ -935,7 +1078,7 @@ def build_document_plans(pages, service, source_ocr_json=None, max_rounds=3):
     for _ in range(max_rounds):
 
         plans = {
-            page: build_mask_plan(blocks, service, source_ocr_json, list(known.values()))
+            page: build_mask_plan(blocks, service, source_ocr_json, list(known.values()), page_number=page)
             for page, blocks in pages.items()
         }
 

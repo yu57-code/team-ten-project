@@ -82,6 +82,17 @@ def is_medical_or_numeric(value):
     )
 
 
+def is_lab_results_heading(text, start, end):
+    if text[start:end].strip().casefold() != "lab results":
+        return False
+    prefix, suffix = text[:start].strip(), text[end:].strip()
+    return (
+        not prefix and suffix in {"", ":", "："}
+        or re.fullmatch(r"(?:重要)?[檢检][驗验][結结]果\s*[(（]\s*(?:recent)?", prefix, re.IGNORECASE)
+        is not None and suffix in {")", "）"}
+    )
+
+
 class PresidioService:
 
     def __init__(self):
@@ -177,7 +188,7 @@ class PresidioService:
             # 過濾欄位標籤誤判
             if (
                 result.entity_type == "PERSON"
-                and value.lower() in FIELD_LABELS
+                and (value.lower() in FIELD_LABELS or is_lab_results_heading(text, result.start, result.end))
             ):
                 continue
 

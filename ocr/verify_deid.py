@@ -144,7 +144,9 @@ def verify(plan, report, reocr, service, extra_known_values=None,
     })
 
     # (4) 以相同規則重新掃描
-    _, detections, review_items, _ = Detector(service).detect(blocks)
+    _, detections, review_items, _ = Detector(
+        service, page_number=page, stage="redacted_reocr"
+    ).detect(blocks)
 
     rescan = sorted({
         (detection["block_id"], detection["entity_type"])
@@ -206,6 +208,8 @@ def verify(plan, report, reocr, service, extra_known_values=None,
         "checks": checks,
         "medical_retention": medical,
         "review_items": review,
+        # Private diagnostics: keep detected text out of checks and the published JSON.
+        "rescan_detections": detections,
         "final": final,
     }
 

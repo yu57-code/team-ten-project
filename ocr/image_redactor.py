@@ -26,7 +26,7 @@ BLACK = (0, 0, 0)
 # 1. 遮蔽範圍計算
 # =====================================================
 
-def padded_rect(bbox, image_size, unmasked_blocks=()):
+def padded_rect(bbox, image_size, unmasked_blocks=(), *, padding_left_limit=None):
     """
     OCR bbox 可能略小於實際字形，四周外擴後再裁切至圖片範圍內。
     外擴部分不可侵入相鄰的保留區塊（例如姓名下方的檢查日期），但一定完整覆蓋 bbox。
@@ -43,6 +43,8 @@ def padded_rect(bbox, image_size, unmasked_blocks=()):
         min(width, x2 + pad),
         min(height, y2 + pad),
     ]
+    if padding_left_limit is not None:
+        rect[0] = max(rect[0], min(x1, padding_left_limit))
 
     for block in unmasked_blocks:
 
@@ -134,7 +136,8 @@ def redact_image(image_path, plan, output_path):
             "block_id": mask["block_id"],
             "bbox": mask["bbox"],
             "rect": padded_rect(
-                mask["bbox"], size, plan.get("unmasked_blocks", [])
+                mask["bbox"], size, plan.get("unmasked_blocks", []),
+                padding_left_limit=mask.get("padding_left_limit"),
             ),
             "entity_types": mask["entity_types"],
         })
