@@ -1,3 +1,6 @@
+@using ImagingAI.Web.Services.Auth
+@inject IServiceProvider Services
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 
@@ -16,7 +19,17 @@
 </head>
 
 <body>
-    <Routes @rendermode="InteractiveServer" />
+    @if (Services.GetService<DevAuthWebRegistration.EnabledMode>() is not null)
+    {
+        @if (HttpContext?.Items[typeof(DevAuthPagePolicy)] is string initialTarget)
+        {
+            <DevAuthRoot InitialTarget="@initialTarget" @rendermode="InteractiveServer" />
+        }
+    }
+    else
+    {
+        <Routes @rendermode="InteractiveServer" />
+    }
     <script src="_framework/blazor.web.js"></script>
     <script src="_content/MudBlazor/MudBlazor.min.js"></script>
     @* 檔案下載等前端小工具 *@
@@ -24,3 +37,7 @@
 </body>
 
 </html>
+
+@code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+}

@@ -112,7 +112,7 @@
     private AuditKind? _kind;
     private string _caseKeyword = string.Empty;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
 
     protected override Task OnInitializedAsync() => LoadAsync();
 

@@ -312,7 +312,7 @@ else
     private bool _showReturn;
     private string _returnReason = string.Empty;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
 
     private bool ReadOnly => _detail?.Status != CaseStatus.PendingReview;
 

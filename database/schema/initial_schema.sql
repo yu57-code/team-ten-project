@@ -592,6 +592,7 @@ CREATE TABLE system.user_account (
     username character varying(100) NOT NULL,
     password_hash text NOT NULL,
     role_id bigint NOT NULL,
+    secondary_role_id bigint,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     is_active boolean DEFAULT true NOT NULL
 );
@@ -991,6 +992,10 @@ ALTER TABLE ONLY system.structured_output
 ALTER TABLE ONLY system.user_account
     ADD CONSTRAINT fk_user_role FOREIGN KEY (role_id) REFERENCES system.role(role_id);
 
+ALTER TABLE ONLY system.user_account
+    ADD CONSTRAINT fk_user_secondary_role FOREIGN KEY (secondary_role_id) REFERENCES system.role(role_id),
+    ADD CONSTRAINT ck_user_account_distinct_roles CHECK (secondary_role_id IS NULL OR secondary_role_id <> role_id);
+
 
 --
 -- TOC entry 5020 (class 2606 OID 16742)
@@ -1314,6 +1319,11 @@ GRANT SELECT(user_id) ON TABLE system.user_account TO imaging_ai_user;
 --
 
 GRANT SELECT(is_active) ON TABLE system.user_account TO imaging_ai_user;
+
+GRANT USAGE ON SCHEMA system TO imaging_ai_user;
+GRANT SELECT (username, password_hash, role_id, secondary_role_id)
+    ON system.user_account TO imaging_ai_user;
+GRANT SELECT (role_id, role_code) ON system.role TO imaging_ai_user;
 
 
 -- Completed on 2026-11-19 17:33:02

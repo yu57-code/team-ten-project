@@ -24,6 +24,9 @@ public sealed partial class MockUserService(MockDataStore store) : IUserService
 
     public Task<OperationResult> AddUserAsync(UserDraft draft, string actor)
     {
+        if (!Enum.IsDefined(draft.Role))
+            return Task.FromResult(OperationResult.Fail("角色無效"));
+
         var username = draft.Username.Trim();
         if (!UsernamePattern().IsMatch(username))
         {
@@ -61,6 +64,9 @@ public sealed partial class MockUserService(MockDataStore store) : IUserService
 
     public Task<OperationResult> UpdateUserAsync(string username, UserDraft draft, string actor)
     {
+        if (!Enum.IsDefined(draft.Role))
+            return Task.FromResult(OperationResult.Fail("角色無效"));
+
         if (string.IsNullOrWhiteSpace(draft.DisplayName))
         {
             return Task.FromResult(OperationResult.Fail("請輸入姓名"));
@@ -128,5 +134,5 @@ public sealed partial class MockUserService(MockDataStore store) : IUserService
     private ManagedUser? Find(string username) =>
         store.Users.FirstOrDefault(u => string.Equals(u.Username, username, StringComparison.OrdinalIgnoreCase));
 
-    private static string RoleText(UserRole role) => role == UserRole.Admin ? "系統管理／維護人員" : "醫療／資料審核人員";
+    private static string RoleText(UserRole role) => role == UserRole.SYSTEM_ADMIN ? "系統管理／維護人員" : "醫療／資料審核人員";
 }

@@ -267,7 +267,7 @@
     private bool _dragOver;
     private bool _submitting;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
 
     protected override async Task OnInitializedAsync()
     {

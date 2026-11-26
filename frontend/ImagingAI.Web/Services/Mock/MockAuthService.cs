@@ -59,6 +59,9 @@ public sealed class MockAuthService(MockDataStore store) : IAuthService
 
     public Task<UserAccount> CompleteSignInAsync(UserRole role)
     {
+        if (!Enum.IsDefined(role))
+            throw new ArgumentOutOfRangeException(nameof(role), role, "Unknown role code.");
+
         var username = _pendingUsername ?? "user";
 
         lock (store.Sync)

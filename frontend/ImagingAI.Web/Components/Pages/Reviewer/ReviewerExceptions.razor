@@ -418,7 +418,7 @@ else
 
     private string UserName =>
         Auth.CurrentUser?.DisplayName
-        ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+        ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
 
     private IEnumerable<ExceptionItem> FilteredItems =>
         (_items ?? [])

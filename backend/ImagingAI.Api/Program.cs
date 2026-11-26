@@ -7,6 +7,7 @@ using ImagingAI.Api.Data;
 using Microsoft.AspNetCore.DataProtection;
 using System.Text.Json.Serialization;
 using ImagingAI.Api.Services;
+using ImagingAI.Api.Auth;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,12 +32,13 @@ builder.Services.AddDbContext<ImagingAiDbContext>(options =>
 
 // Controller 註冊
 // Enum 使用文字格式傳送
-builder.Services.AddControllers()
+var mvc = builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(
             new JsonStringEnumConverter());
     });
+var developmentAuthEnabled = AuthRegistration.AddDevelopmentAuth(mvc, builder.Environment, builder.Configuration);
 
 builder.Services.AddEndpointsApiExplorer();
 
@@ -160,7 +162,11 @@ if (app.Environment.IsDevelopment())
 // 4. HTTP Middleware
 // ==========================================
 
+app.UseDevelopmentAuthBoundary(developmentAuthEnabled);
 app.UseHttpsRedirection();
+
+if (developmentAuthEnabled)
+    app.UseAuthentication();
 
 app.UseAuthorization();
 

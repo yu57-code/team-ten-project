@@ -87,7 +87,7 @@
     private HistoryRange _range = HistoryRange.ThisWeek;
     private HistoryAction? _action;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
 
     // 「處理異常」同時包含「標記無法處理」
     private IEnumerable<HistoryRecord> FilteredRecords => (_records ?? []).Where(r => _action switch

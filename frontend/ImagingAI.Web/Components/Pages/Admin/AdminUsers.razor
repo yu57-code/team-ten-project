@@ -34,8 +34,8 @@
             <div>
                 <label class="ia-label" for="user-role">角色</label>
                 <select id="user-role" class="ia-field" @bind="_draft.Role">
-                    <option value="@UserRole.Reviewer">醫療／資料審核人員</option>
-                    <option value="@UserRole.Admin">系統管理／維護人員</option>
+                    <option value="@UserRole.MEDICAL_REVIEWER">醫療／資料審核人員</option>
+                    <option value="@UserRole.SYSTEM_ADMIN">系統管理／維護人員</option>
                 </select>
             </div>
         </div>
@@ -62,8 +62,8 @@
             <label for="role-filter" class="ia-sr-only">角色</label>
             <select id="role-filter" class="ia-field" @bind="_roleFilter">
                 <option value="">全部角色</option>
-                <option value="@UserRole.Reviewer">醫療／資料審核人員</option>
-                <option value="@UserRole.Admin">系統管理／維護人員</option>
+                <option value="@UserRole.MEDICAL_REVIEWER">醫療／資料審核人員</option>
+                <option value="@UserRole.SYSTEM_ADMIN">系統管理／維護人員</option>
             </select>
         </div>
     </div>
@@ -80,8 +80,8 @@
                         <td class="ia-mono">@user.Username</td>
                         <td>@user.DisplayName</td>
                         <td>
-                            <StatusBadge Tone="@(user.Role == UserRole.Admin ? BadgeTone.Adm : BadgeTone.Info)"
-                                         Text="@(user.Role == UserRole.Admin ? "系統管理／維護人員" : "醫療／資料審核人員")" />
+                            <StatusBadge Tone="@(user.Role == UserRole.SYSTEM_ADMIN ? BadgeTone.Adm : BadgeTone.Info)"
+                                         Text="@(user.Role == UserRole.SYSTEM_ADMIN ? "系統管理／維護人員" : "醫療／資料審核人員")" />
                         </td>
                         <td><StatusBadge Tone="@(user.MfaBound ? BadgeTone.Ok : BadgeTone.Warn)" Text="@(user.MfaBound ? "已綁定" : "未綁定")" /></td>
                         <td class="muted">@(user.LastLoginAt?.ToString("MM/dd HH:mm") ?? "—")</td>
@@ -146,7 +146,7 @@
     private UserDraft _draft = new();
     private bool _busy;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.SYSTEM_ADMIN).DisplayName;
 
     private IEnumerable<ManagedUser> FilteredUsers => (_users ?? [])
         .Where(u => _roleFilter is null || u.Role == _roleFilter)

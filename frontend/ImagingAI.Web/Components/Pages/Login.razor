@@ -1,7 +1,8 @@
+@using ImagingAI.Web.Services.Auth
 @page "/"
 @page "/login"
 @layout EmptyLayout
-@inject IAuthService Auth
+@inject IServiceProvider Services
 @inject NavigationManager Nav
 @inject ISnackbar Snackbar
 
@@ -39,7 +40,7 @@
 
         @if (_step == 1)
         {
-            <div class="lf-body">
+            <form class="lf-body" method="post" action="/login" @ref="_form" @onsubmit="SubmitCredentialsAsync" @onsubmit:preventDefault>
                 <div class="lf-heading">
                     <h2>單一入口登入</h2>
                     <p>審核人員與系統管理人員使用同一入口，登入後依權限角色導向對應工作台。</p>
@@ -49,8 +50,15 @@
                     <label class="lf-label" for="acc">帳號</label>
                     <div class="lf-input">
                         <MudIcon Icon="@Icons.Material.Outlined.PersonOutline" Class="lf-input-icon" />
-                        <input id="acc" type="text" placeholder="例如 dr.chen" autocomplete="username"
-                               @bind="_username" @bind:event="oninput" />
+                        @if (Flow is null)
+                        {
+                            <input id="acc" type="text" placeholder="例如 dr.chen" autocomplete="username"
+                                   @bind="_username" @bind:event="oninput" />
+                        }
+                        else
+                        {
+                            <input id="acc" type="text" placeholder="例如 dr.chen" autocomplete="username" />
+                        }
                     </div>
                 </div>
 
@@ -61,9 +69,17 @@
                     </div>
                     <div class="lf-input">
                         <MudIcon Icon="@Icons.Material.Outlined.Lock" Class="lf-input-icon" />
-                        <input id="pwd" type="@(_showPassword ? "text" : "password")" placeholder="請輸入密碼"
-                               autocomplete="current-password" class="has-action"
-                               @bind="_password" @bind:event="oninput" @onkeydown="OnPasswordKeyDown" />
+                        @if (Flow is null)
+                        {
+                            <input id="pwd" type="@(_showPassword ? "text" : "password")" placeholder="請輸入密碼"
+                                   autocomplete="current-password" class="has-action"
+                                   @bind="_password" @bind:event="oninput" @onkeydown="OnPasswordKeyDown" />
+                        }
+                        else
+                        {
+                            <input id="pwd" type="@(_showPassword ? "text" : "password")" placeholder="請輸入密碼"
+                                   autocomplete="current-password" class="has-action" />
+                        }
                         <button type="button" class="lf-eye" aria-label="@(_showPassword ? "隱藏密碼" : "顯示密碼")"
                                 @onclick="() => _showPassword = !_showPassword">
                             <MudIcon Icon="@(_showPassword ? Icons.Material.Outlined.VisibilityOff : Icons.Material.Outlined.Visibility)" />
@@ -77,11 +93,12 @@
                 }
 
                 <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
-                           Class="lf-submit" Disabled="_busy" OnClick="SubmitCredentialsAsync"
+                           Class="lf-submit" Disabled="@(_busy || (Flow is not null && !_interactive))"
+                           ButtonType="@(Flow is null ? ButtonType.Button : ButtonType.Submit)" OnClick="SubmitMockButtonAsync"
                            EndIcon="@Icons.Material.Filled.ArrowForward">
                     下一步
                 </MudButton>
-            </div>
+            </form>
         }
         else if (_step == 2)
         {
@@ -128,16 +145,26 @@
                     <MudIcon Icon="@Icons.Material.Outlined.CheckCircle" />
                     驗證成功
                 </div>
+                @if (_error is not null)
+                {
+                    <p class="lf-error" role="alert">@_error</p>
+                }
                 <p class="lf-muted lf-muted--lg">系統將依帳號角色導向對應工作台（原型中可直接選擇）：</p>
 
-                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
-                           Class="lf-submit" OnClick="() => EnterAsync(UserRole.Reviewer)">
-                    醫療／資料審核人員
-                </MudButton>
-                <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
-                           Class="lf-submit lf-submit--outline" OnClick="() => EnterAsync(UserRole.Admin)">
-                    系統管理／維護人員
-                </MudButton>
+                @if (Flow is null || _roles.Contains(UserRole.MEDICAL_REVIEWER))
+                {
+                    <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
+                               Class="lf-submit" Disabled="_busy" OnClick="() => EnterAsync(UserRole.MEDICAL_REVIEWER)">
+                        醫療／資料審核人員
+                    </MudButton>
+                }
+                @if (Flow is null || _roles.Contains(UserRole.SYSTEM_ADMIN))
+                {
+                    <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
+                               Class="lf-submit lf-submit--outline" Disabled="_busy" OnClick="() => EnterAsync(UserRole.SYSTEM_ADMIN)">
+                        系統管理／維護人員
+                    </MudButton>
+                }
             </div>
         }
 
@@ -181,6 +208,27 @@
 </div>
 
 @code {
+    private IAuthService Auth => Services.GetRequiredService<IAuthService>();
+
+    [CascadingParameter] private DevAuthFlow? Flow { get; set; }
+
+    private ElementReference _form;
+    private bool _interactive;
+    private IReadOnlyList<UserRole> _roles = [];
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && Flow is not null)
+        {
+            Flow.EnableBrowserInterop();
+            _interactive = true;
+            StateHasChanged();
+        }
+    }
+
+    private Task SubmitMockButtonAsync() =>
+        Flow is null ? SubmitCredentialsAsync() : Task.CompletedTask;
+
     private const int OtpLength = 6;
 
     private static readonly (string Title, string Desc)[] FlowSteps =
@@ -208,8 +256,33 @@
 
     private async Task SubmitCredentialsAsync()
     {
+        if (_busy || _step != 1 || (Flow is not null && !_interactive))
+            return;
+
         _busy = true;
         _error = null;
+
+        if (Flow is not null)
+        {
+            try
+            {
+                var response = await Flow.LoginAsync(_form);
+                if (response.Status == AuthApiStatus.Authenticated)
+                    Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
+                else if (response.Status == AuthApiStatus.RoleSelectionRequired && response.AvailableRoles is { } roles)
+                {
+                    _roles = roles;
+                    _step = 3;
+                }
+                else
+                    _error = DevAuthFlow.Error(response);
+            }
+            finally
+            {
+                _busy = false;
+            }
+            return;
+        }
 
         var result = await Auth.ValidateCredentialsAsync(_username, _password);
 
@@ -286,8 +359,46 @@
 
     private async Task EnterAsync(UserRole role)
     {
+        if (_busy)
+            return;
+
+        if (Flow is not null)
+        {
+            if (_step != 3 || !_roles.Contains(role))
+                return;
+
+            _busy = true;
+            _roles = [];
+            try
+            {
+                var response = await Flow.SelectRoleAsync(role);
+                if (response.Status == AuthApiStatus.Authenticated)
+                    Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
+                else
+                {
+                    _step = 1;
+                    _error = DevAuthFlow.Error(response);
+                }
+            }
+            finally
+            {
+                _busy = false;
+            }
+            return;
+        }
+
+        var destination = role switch
+        {
+            UserRole.MEDICAL_REVIEWER => "/reviewer",
+            UserRole.SYSTEM_ADMIN => "/admin",
+            _ => null
+        };
+
+        if (destination is null)
+            return;
+
         await Auth.CompleteSignInAsync(role);
-        Nav.NavigateTo(role == UserRole.Reviewer ? "/reviewer" : "/admin");
+        Nav.NavigateTo(destination);
     }
     
 }

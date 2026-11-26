@@ -1,0 +1,91 @@
+@using ImagingAI.Web.Components.Pages
+@using ImagingAI.Web.Components.Auth
+@using ImagingAI.Web.Services.Auth
+@using Microsoft.AspNetCore.Components.Authorization
+@implements IDisposable
+@inject DevAuthFlow Flow
+@inject DevAuthStateProvider State
+@inject NavigationManager Navigation
+
+@{ var activePage = ActivePage; }
+@if (activePage != DevAuthPagePolicy.PageKind.Unknown)
+{
+    <CascadingValue Value="Flow" IsFixed="true">
+        @switch (activePage)
+        {
+            case DevAuthPagePolicy.PageKind.Reviewer:
+                <LayoutView Layout="typeof(ReviewerLayout)">
+                    <DevReviewerHome />
+                </LayoutView>
+                break;
+            case DevAuthPagePolicy.PageKind.Admin:
+                <LayoutView Layout="typeof(AdminLayout)">
+                    <DevAdminHome />
+                </LayoutView>
+                break;
+            case DevAuthPagePolicy.PageKind.Identity:
+                <LayoutView Layout="typeof(EmptyLayout)">
+                    <DevAuthIdentity />
+                </LayoutView>
+                break;
+            case DevAuthPagePolicy.PageKind.Login:
+                <LayoutView Layout="typeof(EmptyLayout)">
+                    <Login />
+                </LayoutView>
+                break;
+        }
+    </CascadingValue>
+}
+else if (State.RequiresFullReload)
+{
+    <p role="status">工作階段未建立或已失效。</p>
+    <a href="/login" data-enhance-nav="false">返回登入</a>
+}
+
+@code {
+    // The server emits the canonical target in the protected interactive component descriptor.
+    [Parameter] public string? InitialTarget { get; set; }
+
+    private bool _disposed;
+
+    private DevAuthPagePolicy.PageKind ActivePage
+    {
+        get
+        {
+            var separator = InitialTarget?.IndexOf('?') ?? -1;
+            var issued = separator < 0 ? DevAuthPagePolicy.Resolve(InitialTarget, null) :
+                DevAuthPagePolicy.Resolve(InitialTarget![..separator], InitialTarget[separator..]);
+            var current = DevAuthPagePolicy.FromNavigation(Navigation.Uri, Navigation.BaseUri);
+            if (issued != current)
+                return DevAuthPagePolicy.PageKind.Unknown;
+
+            var state = State.GetAuthenticationStateAsync().GetAwaiter().GetResult();
+            return DevAuthPagePolicy.Evaluate(issued, state.User, State.RequiresFullReload) ==
+                DevAuthPagePolicy.Decision.Allow ? issued.Kind : DevAuthPagePolicy.PageKind.Unknown;
+        }
+    }
+
+    protected override void OnInitialized()
+    {
+        State.AuthenticationStateChanged += OnStateChanged;
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnStateChanged(Task<AuthenticationState> _) => QueueRender();
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs args) => QueueRender();
+
+    private void QueueRender() => _ = InvokeAsync(() =>
+    {
+        if (!_disposed)
+            StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        _disposed = true;
+        State.AuthenticationStateChanged -= OnStateChanged;
+        Navigation.LocationChanged -= OnLocationChanged;
+    }
+}
+

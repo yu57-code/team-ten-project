@@ -316,7 +316,7 @@
 
     private string UserName =>
         Auth.CurrentUser?.DisplayName
-        ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+        ?? Auth.GetDemoUser(UserRole.SYSTEM_ADMIN).DisplayName;
 
 
     // ========================================

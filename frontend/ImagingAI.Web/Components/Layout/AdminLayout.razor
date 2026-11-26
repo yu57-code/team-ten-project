@@ -1,38 +1,78 @@
 @* 系統管理／維護人員版面：深灰＋藍綠側欄。
    Components/Pages/Admin 底下的頁面透過該資料夾的 _Imports.razor 自動套用。 *@
 @inherits LayoutComponentBase
-@inject IAuthService Auth
-@inject INavBadgeService Badges
+@using ImagingAI.Web.Services.Auth
+@using Microsoft.AspNetCore.Components.Authorization
+@implements IDisposable
+@inject IServiceProvider Services
 
-<MudThemeProvider Theme="AppThemes.Admin" />
-<MudPopoverProvider />
-<MudDialogProvider />
-<MudSnackbarProvider />
+@{ var current = CurrentUser; }
+@if (current is { } user)
+{
+    <MudThemeProvider Theme="AppThemes.Admin" />
+    <MudPopoverProvider />
+    <MudDialogProvider />
+    <MudSnackbarProvider />
 
-<div class="ia-shell ia-shell--admin">
-    <AppSidebar Subtitle="系統管理／維護人員" Items="_items" User="CurrentUser" />
-    <main class="ia-main">
-        @Body
-    </main>
-</div>
+    <div class="ia-shell ia-shell--admin">
+        <AppSidebar Subtitle="系統管理／維護人員" Items="_items" User="user" />
+        <main class="ia-main">
+            @Body
+        </main>
+    </div>
+}
 
 @code {
     private IReadOnlyList<NavItem> _items = [];
+    private DevAuthStateProvider? _trustedState;
+    private bool _realMode;
+    private bool _disposed;
 
-    private UserAccount CurrentUser =>
-        Auth.CurrentUser is { Role: UserRole.Admin } user ? user : Auth.GetDemoUser(UserRole.Admin);
+    private UserAccount? CurrentUser
+    {
+        get
+        {
+            if (_realMode)
+                return AppSidebar.ReadTrustedUser(_trustedState, UserRole.SYSTEM_ADMIN);
+
+            var mock = Services.GetRequiredService<IAuthService>();
+            return mock.CurrentUser is { Role: UserRole.SYSTEM_ADMIN } user
+                ? user : mock.GetDemoUser(UserRole.SYSTEM_ADMIN);
+        }
+    }
 
     protected override async Task OnInitializedAsync()
     {
-        var counts = await Badges.GetAdminCountsAsync();
+        _realMode = Services.GetService<DevAuthWebRegistration.EnabledMode>() is not null;
+        if (_realMode)
+        {
+            _trustedState = Services.GetRequiredService<DevAuthStateProvider>();
+            _trustedState.AuthenticationStateChanged += OnIdentityChanged;
+        }
+
+        var counts = _realMode ? default : await Services.GetRequiredService<INavBadgeService>()
+            .GetAdminCountsAsync();
 
         _items =
         [
             new("系統監控", "/admin", Icons.Material.Outlined.ShowChart, NavLinkMatch.All,
-                Badge: counts.FailedTasks, BadgeTone: NavBadgeTone.Red),
+                Badge: counts?.FailedTasks, BadgeTone: NavBadgeTone.Red),
             new("使用者與角色權限", "/admin/users", Icons.Material.Outlined.Group),
             new("稽核軌跡", "/admin/audit", Icons.Material.Outlined.History),
             new("系統設定與備份", "/admin/settings", Icons.Material.Outlined.Tune),
         ];
+    }
+
+    private void OnIdentityChanged(Task<AuthenticationState> state) => _ = InvokeAsync(() =>
+    {
+        if (!_disposed)
+            StateHasChanged();
+    });
+
+    public void Dispose()
+    {
+        _disposed = true;
+        if (_trustedState is not null)
+            _trustedState.AuthenticationStateChanged -= OnIdentityChanged;
     }
 }

@@ -84,7 +84,7 @@ public sealed class UserDraft
 
     public string DisplayName { get; set; } = string.Empty;
 
-    public UserRole Role { get; set; } = UserRole.Reviewer;
+    public UserRole Role { get; set; } = UserRole.MEDICAL_REVIEWER;
 }
 
 /// <summary>角色權限對照的一列（依使用案例圖）。</summary>

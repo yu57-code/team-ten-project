@@ -1,0 +1,50 @@
+@using System.Security.Claims
+@using Microsoft.AspNetCore.Components.Authorization
+@using ImagingAI.Web.Services.Auth
+@implements IDisposable
+@inject AuthenticationStateProvider AuthState
+
+<PageTitle>登入身分驗證</PageTitle>
+<h1>登入身分驗證</h1>
+@if (_user.Identity?.IsAuthenticated == true)
+{
+    <dl>
+        <dt>登入狀態</dt><dd>已登入</dd>
+        <dt>使用者名稱</dt><dd>@_user.Identity.Name</dd>
+        <dt>使用者 ID</dt><dd>@_user.FindFirst(ClaimTypes.NameIdentifier)?.Value</dd>
+        <dt>有效角色</dt><dd>@_user.FindFirst(ClaimTypes.Role)?.Value</dd>
+    </dl>
+}
+else
+{
+    <p role="status">工作階段未建立或已失效。</p>
+    <a href="/login" data-enhance-nav="false">返回登入</a>
+}
+<AppSidebar Subtitle="" Items="[]" User="null!" IdentityOnly="true" CanSignOut="@(_user.Identity?.IsAuthenticated == true)" />
+
+@code {
+    private ClaimsPrincipal _user = new(new ClaimsIdentity());
+    private bool _disposed;
+
+    protected override async Task OnInitializedAsync()
+    {
+        AuthState.AuthenticationStateChanged += OnAuthenticationStateChanged;
+        _user = (await AuthState.GetAuthenticationStateAsync()).User;
+    }
+
+    private void OnAuthenticationStateChanged(Task<AuthenticationState> state) =>
+        _ = InvokeAsync(async () =>
+        {
+            if (_disposed)
+                return;
+
+            _user = (await state).User;
+            StateHasChanged();
+        });
+
+    public void Dispose()
+    {
+        _disposed = true;
+        AuthState.AuthenticationStateChanged -= OnAuthenticationStateChanged;
+    }
+}

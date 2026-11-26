@@ -236,7 +236,7 @@ else
     private string _newTypeZh = string.Empty;
     private string _newTypeEn = string.Empty;
 
-    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Admin).DisplayName;
+    private string UserName => Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.SYSTEM_ADMIN).DisplayName;
 
     protected override async Task OnInitializedAsync()
     {

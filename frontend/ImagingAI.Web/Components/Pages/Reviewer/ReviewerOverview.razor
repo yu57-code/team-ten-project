@@ -165,7 +165,7 @@
 
     private async Task LoadAsync()
     {
-        var userName = Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.Reviewer).DisplayName;
+        var userName = Auth.CurrentUser?.DisplayName ?? Auth.GetDemoUser(UserRole.MEDICAL_REVIEWER).DisplayName;
         _cases = await CaseService.GetCasesAsync();
         _stats = await CaseService.GetDashboardStatsAsync(userName);
 

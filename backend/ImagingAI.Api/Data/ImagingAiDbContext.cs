@@ -513,7 +513,10 @@ public partial class ImagingAiDbContext : DbContext
         {
             entity.HasKey(e => e.UserId).HasName("user_account_pkey");
 
-            entity.ToTable("user_account", "system");
+            entity.ToTable("user_account", "system", table =>
+                table.HasCheckConstraint(
+                    "ck_user_account_distinct_roles",
+                    "secondary_role_id IS NULL OR secondary_role_id <> role_id"));
 
             entity.HasIndex(e => e.Username, "user_account_username_key").IsUnique();
 
@@ -526,6 +529,9 @@ public partial class ImagingAiDbContext : DbContext
                 .HasColumnName("is_active");
             entity.Property(e => e.PasswordHash).HasColumnName("password_hash");
             entity.Property(e => e.RoleId).HasColumnName("role_id");
+            entity.Property(e => e.SecondaryRoleId)
+                .HasColumnType("bigint")
+                .HasColumnName("secondary_role_id");
             entity.Property(e => e.Username)
                 .HasMaxLength(100)
                 .HasColumnName("username");
@@ -534,6 +540,11 @@ public partial class ImagingAiDbContext : DbContext
                 .HasForeignKey(d => d.RoleId)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("fk_user_role");
+
+            entity.HasOne(d => d.SecondaryRole).WithMany()
+                .HasForeignKey(d => d.SecondaryRoleId)
+                .OnDelete(DeleteBehavior.ClientNoAction)
+                .HasConstraintName("fk_user_secondary_role");
         });
 
         OnModelCreatingPartial(modelBuilder);

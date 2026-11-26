@@ -1,8 +1,26 @@
 @* 共用側邊選單：品牌、導覽項目（含數字徽章）、使用者資訊與登出。
    顏色由外層 .ia-shell--reviewer / .ia-shell--admin 的 CSS 變數決定。 *@
-@inject IAuthService Auth
+@using ImagingAI.Web.Services.Auth
+@using System.Security.Claims
+@using System.Globalization
+@inject IServiceProvider Services
 @inject NavigationManager Nav
 
+@{ var visibleUser = RealMode && !IdentityOnly ? ReadTrustedUser(TrustedState, User.Role) : User; }
+@if (IdentityOnly)
+{
+    @if (ActiveFlow is not null && CanSignOut)
+    {
+        <MudIconButton Icon="@Icons.Material.Outlined.Logout" Size="Size.Small" Class="ia-logout"
+                       aria-label="登出" title="登出" Disabled="@(!_interactive || _busy)" OnClick="SignOutAsync" />
+    }
+    @if (_logoutError is not null)
+    {
+        <p role="alert">@_logoutError</p>
+    }
+}
+else if (visibleUser is { } user)
+{
 <aside class="ia-sidebar @(_isCollapsed ? "is-collapsed" : "")">
     <div class="ia-brand">
         @if (!_isCollapsed)
@@ -48,7 +66,8 @@
     <MudNavMenu Class="ia-nav">
         @foreach (var item in Items)
         {
-            <MudNavLink Href="@item.Href" Match="@item.Match" Icon="@item.Icon" Ripple="false">
+            var enabled = IsLinkEnabled(item);
+            <MudNavLink Href="@(enabled ? item.Href : null)" Disabled="@(!enabled)" Match="@item.Match" Icon="@item.Icon" Ripple="false">
                 <span class="ia-nav-text">@item.Text</span>
                 @if (item.Badge is > 0)
                 {
@@ -63,10 +82,10 @@
     <div class="ia-userbox">
         @if (!_isCollapsed)
         {
-            <MudAvatar Class="ia-avatar">@User.AvatarText</MudAvatar>
+            <MudAvatar Class="ia-avatar">@user.AvatarText</MudAvatar>
             <div class="ia-user-meta">
-                <div class="ia-user-name">@User.DisplayName</div>
-                <div class="ia-user-sub">@User.Username・@(User.MfaEnabled ? "MFA 已驗證" : "MFA 未驗證")</div>
+                <div class="ia-user-name">@user.DisplayName</div>
+                <div class="ia-user-sub">@user.Username・@(user.MfaEnabled ? "MFA 已驗證" : "MFA 未驗證")</div>
             </div>
         }
         <MudIconButton Icon="@Icons.Material.Outlined.Logout"
@@ -74,11 +93,45 @@
                        Class="ia-logout"
                        aria-label="登出"
                        title="登出"
+                       Disabled="@(RealMode && (!_interactive || _busy))"
                        OnClick="SignOutAsync" />
     </div>
 </aside>
+}
 
 @code {
+    private bool RealMode => Services.GetService<DevAuthWebRegistration.EnabledMode>() is not null;
+    private DevAuthStateProvider? TrustedState => RealMode ? Services.GetService<DevAuthStateProvider>() : null;
+    private DevAuthFlow? ActiveFlow => RealMode ? Flow ?? Services.GetService<DevAuthFlow>() : null;
+
+    internal static UserAccount? ReadTrustedUser(DevAuthStateProvider? state, UserRole role)
+    {
+        if (state is null || state.RequiresFullReload)
+            return null;
+
+        var principal = state.GetAuthenticationStateAsync().GetAwaiter().GetResult().User;
+        if (DevAuthPagePolicy.TrustedRole(principal) != role.ToString() ||
+            principal.FindFirst(ClaimTypes.NameIdentifier) is null ||
+            principal.Identity?.Name is not { Length: > 0 } name)
+            return null;
+
+        return new(name, name, role, StringInfo.GetNextTextElement(name), MfaEnabled: false);
+    }
+
+    private bool IsLinkEnabled(NavItem item)
+    {
+        if (!RealMode)
+            return true;
+
+        var state = TrustedState;
+        if (state is null)
+            return false;
+
+        var target = DevAuthPagePolicy.Resolve(item.Href, null);
+        var principal = state.GetAuthenticationStateAsync().GetAwaiter().GetResult().User;
+        return DevAuthPagePolicy.Evaluate(target, principal, state.RequiresFullReload) == DevAuthPagePolicy.Decision.Allow;
+    }
+
     /// <summary>品牌名稱下方的角色說明，例如「醫療／資料審核人員」。</summary>
     [Parameter, EditorRequired] public string Subtitle { get; set; } = string.Empty;
 
@@ -86,7 +139,24 @@
 
     [Parameter, EditorRequired] public UserAccount User { get; set; } = default!;
 
+    [Parameter] public bool IdentityOnly { get; set; }
+    [Parameter] public bool CanSignOut { get; set; }
+    [CascadingParameter] private DevAuthFlow? Flow { get; set; }
+
+    private bool _interactive;
+    private bool _busy;
+    private string? _logoutError;
     private bool _isCollapsed;
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender && ActiveFlow is { } flow)
+        {
+            flow.EnableBrowserInterop();
+            _interactive = true;
+            StateHasChanged();
+        }
+    }
 
     private void ToggleSidebar() => _isCollapsed = !_isCollapsed;
 
@@ -95,7 +165,30 @@
 
     private async Task SignOutAsync()
     {
-        await Auth.SignOutAsync();
+        if (RealMode || IdentityOnly)
+        {
+            if (ActiveFlow is not { } flow || !_interactive || _busy ||
+                (IdentityOnly ? !CanSignOut : ReadTrustedUser(TrustedState, User.Role) is null))
+                return;
+
+            _busy = true;
+            _logoutError = null;
+            try
+            {
+                var result = await flow.LogoutAsync();
+                if (result.Status == AuthApiStatus.LoggedOut && result.HttpStatus == 204)
+                    Nav.NavigateTo("/login", forceLoad: true);
+                else
+                    _logoutError = "無法確認是否已登出。" + DevAuthFlow.Error(result);
+            }
+            finally
+            {
+                _busy = false;
+            }
+            return;
+        }
+
+        await Services.GetRequiredService<IAuthService>().SignOutAsync();
         Nav.NavigateTo("/login");
     }
 }

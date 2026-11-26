@@ -13,6 +13,8 @@ public partial class UserAccount
 
     public long RoleId { get; set; }
 
+    public long? SecondaryRoleId { get; set; }
+
     public DateTime CreatedAt { get; set; }
 
     public bool IsActive { get; set; }
@@ -28,5 +30,7 @@ public partial class UserAccount
     public virtual ICollection<ReviewRecord> ReviewRecords { get; set; } = new List<ReviewRecord>();
 
     public virtual Role Role { get; set; } = null!;
+
+    public virtual Role? SecondaryRole { get; set; }
 
 }

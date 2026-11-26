@@ -15,6 +15,9 @@ using ImagingAI.Api.Controllers;
 // Dependency-free, isolated tests. No connection string, live PostgreSQL or production files.
 var tests = new List<(string Name, Func<Task> Run)>();
 void Test(string name, Func<Task> run) => tests.Add((name, run));
+AuthServiceTests.Register(Test);
+AuthRoleSelectionTests.Register(Test);
+DevAuthTests.Register(Test);
 void Check(bool value) { if (!value) throw new Exception("Assertion failed (sensitive details suppressed)"); }
 async Task Reject(int status, Func<Task> run)
 {

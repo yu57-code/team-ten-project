@@ -4,6 +4,7 @@ using ImagingAI.Web.Services;
 using ImagingAI.Web.Services.Interfaces;
 using ImagingAI.Web.Services.Mock;
 using ImagingAI.Web.Services.Api;
+using ImagingAI.Web.Services.Auth;
 using MudBlazor;
 using MudBlazor.Services;
 
@@ -15,6 +16,9 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
+
+var developmentWebIdentityEnabled =
+    builder.Services.AddDevelopmentWebIdentity(builder.Environment, builder.Configuration);
 
 builder.Services.AddMudServices(config =>
 {
@@ -151,9 +155,18 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
+if (developmentWebIdentityEnabled)
+    app.UseDevelopmentWebLoopback();
+
 app.UseHttpsRedirection();
 
 app.UseStaticFiles();
+
+if (developmentWebIdentityEnabled)
+{
+    app.UseAuthentication();
+    app.UseDevelopmentWebIdentity();
+}
 
 app.UseAntiforgery();
 
