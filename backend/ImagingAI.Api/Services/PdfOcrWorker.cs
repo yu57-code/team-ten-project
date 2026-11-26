@@ -198,8 +198,9 @@ public sealed class PdfOcrWorker(
         var credential = configuration["MrnReview:TestCredential"];
         if (string.IsNullOrWhiteSpace(credential) || credential.Length < 32 ||
             !services.GetRequiredService<IMrnCorrectionAccess>().IsAuthorized(credential)) return false;
+        var allowAll = configuration.GetValue("MrnReview:AllowAllInDevelopment", false);
         var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
-        if (allowed.Length == 0) return false;
+        if (!allowAll && allowed.Length == 0) return false;
 
         var resume = services.GetRequiredService<MrnResumeService>();
         await resume.RepairPublishedAsync(connection, uploader, onlyCase, cancellationToken,
@@ -224,7 +225,7 @@ public sealed class PdfOcrWorker(
                 AND (v.review_comment::jsonb ->> 'exceptionId')=e.exception_id::text
             WHERE r.uploaded_by=@uploader AND NOT r.is_deleted
               AND r.processing_status IN ('MRN_REVALIDATED','MRN_DEID_PROCESSING')
-              AND r.report_id=ANY(@allowed) AND (@case IS NULL OR r.report_id=@case)
+              AND (@allowAll OR r.report_id=ANY(@allowed)) AND (@case IS NULL OR r.report_id=@case)
               AND e.exception_category='MRN_MISMATCH' AND e.status='RESOLVED'
               AND (v.review_comment::jsonb -> 'result' ->> 'passed')='true'
               AND (v.review_comment::jsonb -> 'result' ->> 'resumeQueued')='true'
@@ -238,6 +239,7 @@ public sealed class PdfOcrWorker(
             """, connection))
         {
             next.Parameters.AddWithValue("uploader", uploader);
+            next.Parameters.AddWithValue("allowAll", allowAll);
             next.Parameters.AddWithValue("allowed", allowed);
             next.Parameters.AddWithValue("case", NpgsqlTypes.NpgsqlDbType.Bigint,
                 (object?)onlyCase ?? DBNull.Value);
