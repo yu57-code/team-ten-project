@@ -14,6 +14,11 @@ namespace ImagingAI.Api.Services;
 public sealed class MrnEvidenceService(ImagingAiDbContext database, IConfiguration configuration,
     IWebHostEnvironment environment, IDataProtectionProvider protection) : IMrnCorrectionAccess
 {
+    internal bool IsCaseAllowed(long[] allowed, bool allowAll) => allowAll || allowed.Length > 0;
+
+    internal bool AllowAllInDevelopment => environment.IsDevelopment() &&
+        configuration.GetValue("MrnReview:AllowAllInDevelopment", false);
+
     public bool IsAuthorized(string token)
     {
         var secret = configuration["MrnReview:TestCredential"];
@@ -27,8 +32,9 @@ public sealed class MrnEvidenceService(ImagingAiDbContext database, IConfigurati
     public async Task<MrnEvidence?> ReadAsync(long exceptionId, CancellationToken cancellationToken)
     {
         var reviewer = configuration.GetValue<long>("MrnReview:ReviewerId");
+        var allowAll = AllowAllInDevelopment;
         var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
-        if (reviewer <= 0 || allowed.Length == 0)
+        if (reviewer <= 0 || !IsCaseAllowed(allowed, allowAll))
             return null;
 
         await database.Database.OpenConnectionAsync(cancellationToken);
@@ -72,16 +78,18 @@ public sealed class MrnEvidenceService(ImagingAiDbContext database, IConfigurati
         NpgsqlTransaction transaction, CancellationToken cancellationToken)
     {
         var reviewer = configuration.GetValue<long>("MrnReview:ReviewerId");
+        var allowAll = AllowAllInDevelopment;
         var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
-        if (reviewer <= 0 || allowed.Length == 0) return null;
+        if (reviewer <= 0 || !IsCaseAllowed(allowed, allowAll)) return null;
         await using var query = new NpgsqlCommand("""
             SELECT e.report_id, r.storage_uri, r.sha256_hash
             FROM system.exception_queue e JOIN clinical.clinical_report r ON r.report_id=e.report_id
             WHERE e.exception_id=@id AND e.exception_category='MRN_MISMATCH'
-              AND NOT r.is_deleted AND e.report_id=ANY(@allowed)
+              AND NOT r.is_deleted AND (@allowAll OR e.report_id=ANY(@allowed))
               AND EXISTS (SELECT 1 FROM system.user_account WHERE user_id=@reviewer AND is_active)
             """, connection, transaction);
         query.Parameters.AddWithValue("id", exceptionId);
+        query.Parameters.AddWithValue("allowAll", allowAll);
         query.Parameters.AddWithValue("allowed", allowed);
         query.Parameters.AddWithValue("reviewer", reviewer);
         long reportId;
