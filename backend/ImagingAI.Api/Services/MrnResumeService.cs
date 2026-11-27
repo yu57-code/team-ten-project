@@ -41,20 +41,21 @@ public sealed class MrnWorkflowRepository(ImagingAiDbContext database, MrnEviden
     internal async Task<IMrnWorkflowSession?> OpenOnConnectionAsync(NpgsqlConnection connection, long id, CancellationToken token)
     {
         var reviewer = configuration.GetValue<long>("MrnReview:ReviewerId");
-        var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
-        if (reviewer <= 0 || allowed.Length == 0) return null;
+        var allowAll = configuration.GetValue("MrnReview:AllowAllInDevelopment", false);
+var allowed = configuration.GetSection("MrnReview:AllowedSyntheticCaseIds").Get<long[]>() ?? [];
+if (reviewer <= 0 || (!allowAll && allowed.Length == 0)) return null;
         // Exception inserts can race with validation; serialize the blocker predicate with the queue decision.
         var tx = await connection.BeginTransactionAsync(IsolationLevel.Serializable, token);
         try
         {
             await using (var limits = new NpgsqlCommand("SET LOCAL lock_timeout='5s'", connection, tx)) await limits.ExecuteNonQueryAsync(token);
-            await using var lookup = new NpgsqlCommand("""
-                SELECT e.report_id FROM system.exception_queue e JOIN clinical.clinical_report r ON r.report_id=e.report_id
-                WHERE e.exception_id=@id AND e.exception_category='MRN_MISMATCH' AND NOT r.is_deleted
-                AND e.report_id=ANY(@allowed)
-                AND EXISTS(SELECT 1 FROM system.user_account WHERE user_id=@reviewer AND is_active)
-                """, connection, tx);
+           await using var lookup = new NpgsqlCommand("""
+    SELECT e.report_id FROM system.exception_queue e JOIN clinical.clinical_report r ON r.report_id=e.report_id
+    WHERE e.exception_id=@id AND e.exception_category='MRN_MISMATCH' AND NOT r.is_deleted
+      AND (@allowAll OR e.report_id=ANY(@allowed))
+    """, connection, tx);
             lookup.Parameters.AddWithValue("id", id); lookup.Parameters.AddWithValue("allowed", allowed); lookup.Parameters.AddWithValue("reviewer", reviewer);
+            lookup.Parameters.AddWithValue("allowAll", allowAll);
             if (await lookup.ExecuteScalarAsync(token) is not long report) { await tx.DisposeAsync(); return null; }
             string processing, storage, state;
             await using (var command = new NpgsqlCommand("SELECT processing_status, storage_uri FROM clinical.clinical_report WHERE report_id=@report AND NOT is_deleted FOR UPDATE", connection, tx))
