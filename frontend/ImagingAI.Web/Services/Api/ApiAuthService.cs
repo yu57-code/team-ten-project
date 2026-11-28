@@ -28,11 +28,34 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
     public Task<AuthApiResult> LoginWithFormAsync(ElementReference form, CancellationToken cancellationToken = default) =>
         ExecuteAsync(Operation.Login, [form], cancellationToken);
 
+    public Task<AuthApiResult> VerifyOtpAsync(ElementReference form) =>
+        ExecuteAsync(Operation.VerifyOtp, [form], default);
+
+    public Task<AuthApiResult> ResendOtpAsync(ElementReference form) =>
+        ExecuteAsync(Operation.ResendOtp, [form], default);
+
+    public async Task PrepareOtpAsync(ElementReference form)
+    {
+        await gate.WaitAsync();
+        try
+        {
+            if (browserInteropEnabled && !disposed)
+            {
+                module ??= await js.InvokeAsync<IJSObjectReference>("import", "./js/devAuth.js");
+                await module.InvokeVoidAsync("prepareOtp", form);
+            }
+        }
+        finally { gate.Release(); }
+    }
+
     public Task<AuthApiResult> SelectRoleAsync(UserRole role, CancellationToken cancellationToken = default) =>
         ExecuteAsync(Operation.SelectRole, [role], cancellationToken);
 
     public Task<AuthApiResult> MeAsync(CancellationToken cancellationToken = default) =>
         ExecuteAsync(Operation.Me, [], cancellationToken);
+
+    public Task<AuthApiResult> RecoverLoginAsync() =>
+        ExecuteAsync(Operation.RecoverLogin, [], default);
 
     public Task<AuthApiResult> LogoutAsync(CancellationToken cancellationToken = default) =>
         ExecuteAsync(Operation.Logout, [], cancellationToken);
@@ -71,8 +94,11 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
             {
                 Operation.Csrf => "getCsrf",
                 Operation.Login => "login",
+                Operation.VerifyOtp => "verifyOtp",
+                Operation.ResendOtp => "resendOtp",
                 Operation.SelectRole => "selectRole",
                 Operation.Me => "me",
+                Operation.RecoverLogin => "recoverLogin",
                 _ => "logout"
             };
             var response = await module.InvokeAsync<JsonElement>(export, cancellationToken, arguments);
@@ -122,7 +148,7 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
 
         if (Property(response, "duringCsrf").ValueKind == JsonValueKind.True)
             return new(AuthApiStatus.ProtocolError, httpStatus);
-        if (operation == Operation.Logout && httpStatus == 204)
+        if (operation is Operation.Logout or Operation.RecoverLogin && httpStatus == 204)
             return new(AuthApiStatus.LoggedOut, httpStatus);
         if (httpStatus != 200)
             return new(AuthApiStatus.ProtocolError, httpStatus);
@@ -131,16 +157,30 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
         {
             Operation.Csrf when Text(body, "requestToken") is { } token && !string.IsNullOrWhiteSpace(token) =>
                 new(AuthApiStatus.CsrfReady, httpStatus, CsrfToken: new AuthCsrfToken(token)),
-            Operation.Me when ReadIdentity(body) is { } identity =>
+            Operation.Me or Operation.RecoverLogin when ReadIdentity(body) is { } identity =>
                 new(AuthApiStatus.Authenticated, httpStatus, Identity: identity),
-            Operation.Login or Operation.SelectRole when Text(body, "state") == "authenticated" &&
+            Operation.VerifyOtp or Operation.SelectRole when Text(body, "state") == "authenticated" &&
                 IsNullOrAbsent(body, "availableRoleCodes") && IsNullOrAbsent(body, "expiresInSeconds") &&
                 ReadIdentity(Property(body, "user")) is { } identity =>
                 new(AuthApiStatus.Authenticated, httpStatus, Identity: identity),
-            Operation.Login when Text(body, "state") == "roleSelectionRequired" && IsNullOrAbsent(body, "user") =>
+            Operation.VerifyOtp when Text(body, "state") == "roleSelectionRequired" && IsNullOrAbsent(body, "user") =>
                 ReadPendingRoles(body),
+            Operation.Login or Operation.ResendOtp when Text(body, "state") == "otpRequired" &&
+                IsNullOrAbsent(body, "user") && IsNullOrAbsent(body, "availableRoleCodes") =>
+                ReadOtp(body),
             _ => new(AuthApiStatus.ProtocolError, httpStatus)
         };
+    }
+
+    private static AuthApiResult ReadOtp(JsonElement body)
+    {
+        var expiry = Property(body, "expiresInSeconds");
+        var resend = Property(body, "resendAfterSeconds");
+        return expiry.ValueKind == JsonValueKind.Number && expiry.TryGetInt32(out var seconds) &&
+               seconds is >= 0 and <= 300 && resend.ValueKind == JsonValueKind.Number &&
+               resend.TryGetInt32(out var wait) && wait is >= 0 and <= 60
+            ? new(AuthApiStatus.OtpRequired, 200, ExpiresInSeconds: seconds, ResendAfterSeconds: wait)
+            : new(AuthApiStatus.ProtocolError, 200);
     }
 
     private static AuthApiResult ReadPendingRoles(JsonElement body)
@@ -148,7 +188,7 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
         var roles = Property(body, "availableRoleCodes");
         var expiry = Property(body, "expiresInSeconds");
         if (roles.ValueKind != JsonValueKind.Array || roles.GetArrayLength() != 2 ||
-            expiry.ValueKind != JsonValueKind.Number || !expiry.TryGetInt32(out var seconds) || seconds <= 0 ||
+            expiry.ValueKind != JsonValueKind.Number || !expiry.TryGetInt32(out var seconds) || seconds is <= 0 or > 120 ||
             ReadRole(roles[0]) is not { } first || ReadRole(roles[1]) is not { } second || first == second)
         {
             return new(AuthApiStatus.ProtocolError, 200);
@@ -185,12 +225,14 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
         (401, "invalid_credentials") => (AuthApiStatus.InvalidCredentials, true),
         (401, "invalid_role_selection") => (AuthApiStatus.InvalidRoleSelection, true),
         (401, "invalid_session") => (AuthApiStatus.InvalidSession, true),
+        (401, "invalid_otp") => (AuthApiStatus.InvalidOtp, true),
+        (409, "verification_pending") => (AuthApiStatus.VerificationPending, true),
         (403, "logout_required") => (AuthApiStatus.LogoutRequired, true),
         (403, "role_not_allowed") => (AuthApiStatus.RoleNotAllowed, true),
         (404, "not_found") => (AuthApiStatus.NotFound, true),
         (429, "rate_limited") => (AuthApiStatus.RateLimited, true),
         (503, "account_store_unavailable" or "pending_store_unavailable" or
-            "session_store_unavailable" or "session_unavailable") => (AuthApiStatus.ServiceUnavailable, true),
+            "session_store_unavailable" or "session_unavailable" or "verification_unavailable") => (AuthApiStatus.ServiceUnavailable, true),
         (400, _) => (AuthApiStatus.InvalidRequest, false),
         (401, _) => (AuthApiStatus.Unauthorized, false),
         (403, _) => (AuthApiStatus.Forbidden, false),
@@ -247,5 +289,5 @@ public sealed class ApiAuthService(IJSRuntime js, TimeProvider? timeProvider = n
         }
     }
 
-    private enum Operation { Csrf, Login, SelectRole, Me, Logout }
+    private enum Operation { Csrf, Login, VerifyOtp, ResendOtp, SelectRole, Me, RecoverLogin, Logout }
 }

@@ -28,8 +28,12 @@ public sealed class AuthSessionStore
         this.capacity = capacity;
     }
 
-    internal string? TryCreate(VerifiedAccount account)
+    internal string? TryCreate(VerifiedAccount account, object? authorization)
     {
+        var otpBinding = AuthService.ConsumeRoleGrant(authorization);
+        if (otpBinding is not { IsEligible: true } || otpBinding.Id != account.UserId ||
+            otpBinding.Username != account.Username || !otpBinding.MatchesRoles(account.RoleCodes))
+            return null;
         lock (gate)
         {
             var timestamp = clock.GetTimestamp();
@@ -39,7 +43,7 @@ public sealed class AuthSessionStore
 
             var createdAt = clock.GetUtcNow();
             var snapshot = account with { RoleCodes = Array.AsReadOnly(account.RoleCodes.ToArray()) };
-            var state = new PendingRoleSelection(snapshot, createdAt, createdAt + PendingLifetime, timestamp);
+            var state = new PendingRoleSelection(snapshot, createdAt, createdAt + PendingLifetime, timestamp, otpBinding);
             while (true)
             {
                 var token = Convert.ToHexString(RandomNumberGenerator.GetBytes(TokenByteCount));
@@ -99,7 +103,9 @@ public sealed class AuthSessionStore
         {
             var timestamp = clock.GetTimestamp();
             RemoveExpiredSessions(timestamp);
-            if (sessions.Count >= capacity)
+            if (sessions.Count >= capacity ||
+                AuthService.ConsumeRoleGrant(confirmation.Authorization, activeRole) is not { IsEligible: true } binding ||
+                binding.Id != userId || binding.Username != username || !binding.MatchesRoles(confirmation.ConfirmedRoleCodes))
                 return null;
 
             var now = clock.GetUtcNow();
@@ -108,7 +114,7 @@ public sealed class AuthSessionStore
             {
                 var session = new DevelopmentSession(
                     Convert.ToHexString(RandomNumberGenerator.GetBytes(TokenByteCount)), userId,
-                    username, activeRole, roles, now, now + SessionLifetime, timestamp);
+                    username, activeRole, roles, now, now + SessionLifetime, timestamp, binding);
                 if (sessions.TryAdd(session.Id, session))
                     return session;
             }
@@ -161,13 +167,15 @@ public sealed class AuthSessionStore
     }
 
     internal sealed record PendingRoleSelection(
-        VerifiedAccount Account, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, long CreatedTimestamp)
+        VerifiedAccount Account, DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, long CreatedTimestamp,
+        [property: System.Text.Json.Serialization.JsonIgnore] EmailOtpAccount? OtpBinding)
     {
         public RoleConfirmationStatus Stage => RoleConfirmationStatus.RoleSelectionRequired;
     }
 
     internal sealed class DevelopmentSession(string id, long userId, string username, string activeRoleCode,
-        IReadOnlyList<string> roleCodes, DateTimeOffset createdAt, DateTimeOffset expiresAt, long createdTimestamp)
+        IReadOnlyList<string> roleCodes, DateTimeOffset createdAt, DateTimeOffset expiresAt, long createdTimestamp,
+        EmailOtpAccount binding)
     {
         internal string Id { get; } = id;
         internal long UserId { get; } = userId;
@@ -177,5 +185,6 @@ public sealed class AuthSessionStore
         internal DateTimeOffset CreatedAt { get; } = createdAt;
         internal DateTimeOffset ExpiresAt { get; } = expiresAt;
         internal long CreatedTimestamp { get; } = createdTimestamp;
+        internal EmailOtpAccount OtpBinding { get; } = binding;
     }
 }

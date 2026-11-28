@@ -18,6 +18,9 @@ void Test(string name, Func<Task> run) => tests.Add((name, run));
 AuthServiceTests.Register(Test);
 AuthRoleSelectionTests.Register(Test);
 DevAuthTests.Register(Test);
+ImagingAI.Api.Tests.EmailOtpTests.Register(Test);
+Test("OtpHttp_loopback_https_routes_cookies_csrf_and_business_gate", OtpHttpTests.Run);
+GmailSmtpTests.Register(Test);
 void Check(bool value) { if (!value) throw new Exception("Assertion failed (sensitive details suppressed)"); }
 async Task Reject(int status, Func<Task> run)
 {

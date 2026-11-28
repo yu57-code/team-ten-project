@@ -36,6 +36,14 @@ internal static class DevAuthTests
 
     internal static void Register(Action<string, Func<Task>> test)
     {
+        test("OtpApi_password_only_cannot_authenticate_or_select", PasswordOnly);
+        test("OtpApi_cookie_missing_tampered_expired_and_wrong_code", InvalidOtp);
+        test("OtpApi_phase_csrf_resend_and_replay", OtpResend);
+        test("OtpApi_parallel_verification_issues_one_session", ParallelOtp);
+        test("OtpApi_logout_restart_and_relogin_invalidate_challenges", RevokeOtp);
+        test("OtpApi_account_binding_and_delivery_fail_closed", OtpUnavailable);
+        test("OtpApi_email_changes_revoke_selection_and_session", ChangesAfterOtp);
+        test("OtpApi_legacy_cookie_and_pending_proof_rejected", LegacyCredentials);
         test("DevAuth_admin_signs_in", () => SignInSingle(Admin, AdminRole));
         test("DevAuth_reviewer_signs_in", () => SignInSingle(Reviewer, ReviewerRole));
         test("DevAuth_dual_pending_cookie_cannot_use_me", PendingCannotUseMe);
@@ -245,7 +253,7 @@ internal static class DevAuthTests
               ticket.Properties.ExpiresUtc - ticket.Properties.IssuedUtc == TimeSpan.FromMinutes(30) &&
               !f.Options.SlidingExpiration && f.Options.Cookie.SecurePolicy == CookieSecurePolicy.Always);
         Check(ticket.Principal.FindAll(ClaimTypes.Role).Select(c => c.Value).SequenceEqual(new[] { AdminRole }) &&
-              ticket.Principal.FindFirstValue("amr") == "pwd" &&
+              ticket.Principal.FindAll("amr").Select(c => c.Value).SequenceEqual(new[] { "pwd", "email_otp" }) &&
               !ticket.Principal.Claims.Any(c => c.Value.Contains("mfa", StringComparison.OrdinalIgnoreCase)));
         var json = JsonSerializer.Serialize(login.Value);
         Check(!json.Contains(browser.Cookies[CookieName], StringComparison.Ordinal) &&
@@ -385,7 +393,7 @@ internal static class DevAuthTests
         using var f = new Fixture();
         var browser = new Browser();
         await f.Csrf(browser);
-        foreach (var action in new[] { "login", "select-role", "logout" })
+        foreach (var action in new[] { "login", "otp/verify", "otp/resend", "select-role", "logout" })
         {
             Check(await f.Invoke(browser, action) is { Status: 400, Code: "invalid_csrf" });
             Check(await f.Invoke(browser, action, "not a valid token") is { Status: 400, Code: "invalid_csrf" });
@@ -398,7 +406,8 @@ internal static class DevAuthTests
         var browser = new Browser();
         var anonymousCsrf = await f.Csrf(browser);
         var originalCookie = browser.Cookies[CsrfCookieName];
-        Check((await f.Invoke(browser, "login", anonymousCsrf, Admin)).Status == 200);
+        Check((await f.Begin(browser, Admin, csrf: anonymousCsrf)).Status == 200);
+        Check((await f.Finish(browser)).Status == 200);
         browser.Cookies[CsrfCookieName] = originalCookie;
         Check(await f.Invoke(browser, "logout", anonymousCsrf) is { Status: 400, Code: "invalid_csrf" });
         Check((await f.Invoke(browser, "logout", await f.Csrf(browser))).Status == 204);
@@ -449,18 +458,17 @@ internal static class DevAuthTests
         return Task.CompletedTask;
     }
 
-    private static Task SessionCapacity()
+    private static async Task SessionCapacity()
     {
-        var clock = new ManualClock();
-        var store = new AuthSessionStore(clock, 1);
-        var confirmation = new RoleConfirmationResult(RoleConfirmationStatus.RoleConfirmed,
-            new VerifiedAccount(42, Admin, new[] { AdminRole }), activeRoleCode: AdminRole);
-        var first = store.TryCreateSession(confirmation)!;
-        Check(store.TryCreateSession(confirmation) is null && store.FindSession(first.Id) is not null);
-        clock.Advance(TimeSpan.FromMinutes(30));
-        Check(store.FindSession(first.Id) is null && store.TryCreateSession(confirmation) is not null);
-        return Task.CompletedTask;
+        using var f = new Fixture(sessionCapacity: 1);
+        var first = new Browser();
+        Check((await f.Login(first, Admin)).Status == 200);
+        Check(await f.Login(new Browser(), Reviewer) is { Status: 503, Code: "session_store_unavailable" });
+        f.Clock.Advance(TimeSpan.FromMinutes(30));
+        Check((await f.Invoke(first, "me")).Status == 401);
+        Check((await f.Login(new Browser(), Reviewer)).Status == 200);
     }
+
 
     private static async Task CookieIssuanceFailure()
     {
@@ -529,6 +537,163 @@ internal static class DevAuthTests
         return Task.CompletedTask;
     }
 
+    private static async Task PasswordOnly()
+    {
+        using var f = new Fixture();
+        Check((await f.Begin(new Browser(), Admin, "wrong")).Status == 401 && f.Sender.Count == 0);
+        var browser = new Browser();
+        var result = await f.Begin(browser, Admin);
+        Check(result.Value is AuthOtpRequiredResponse { State: "otpRequired", ExpiresInSeconds: 300 });
+        var cookie = result.Cookies.Single(c => c.Name.Value == OtpCookieName);
+        Check(Secure(cookie) && cookie.Expires is null && cookie.MaxAge is null);
+        Check(!browser.Cookies.ContainsKey(CookieName) && !browser.Cookies.ContainsKey(PendingCookieName));
+        Check((await f.Invoke(browser, "me")).Status == 401 && (await f.Select(browser, AdminRole)).Status == 401);
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(result.Value));
+        Check(json.RootElement.EnumerateObject().Select(x => x.Name)
+            .SequenceEqual(new[] { "State", "ExpiresInSeconds", "ResendAfterSeconds" }));
+    }
+
+    private static async Task InvalidOtp()
+    {
+        using var f = new Fixture();
+        var browser = new Browser();
+        await f.Begin(browser, Admin);
+        var code = f.Sender.Code;
+        Check((await f.Finish(new Browser(), code)).Status == 401);
+        var tampered = browser.Clone();
+        var id = tampered.Cookies[OtpCookieName];
+        tampered.Cookies[OtpCookieName] = (id[0] == 'A' ? "B" : "A") + id[1..];
+        Check((await f.Finish(tampered, code)).Status == 401);
+        Check((await f.Finish(browser, code == "000000" ? "000001" : "000000")).Status == 401);
+        f.Clock.Advance(TimeSpan.FromMinutes(5));
+        Check((await f.Finish(browser, code)).Status == 401);
+    }
+
+    private static async Task OtpResend()
+    {
+        using var f = new Fixture();
+        var browser = new Browser();
+        var oldToken = await f.Csrf(browser);
+        var oldCookie = browser.Cookies[CsrfCookieName];
+        await f.Begin(browser, Dual, csrf: oldToken);
+        browser.Cookies[CsrfCookieName] = oldCookie;
+        Check((await f.Invoke(browser, "otp/verify", oldToken, f.Sender.Code)).Status == 400);
+        var otpToken = await f.Csrf(browser);
+        var otpCookie = browser.Cookies[CsrfCookieName];
+        var oldCode = f.Sender.Code;
+        Check(await f.Invoke(browser, "otp/resend", otpToken) is { Status: 429, RetryAfter: "60" });
+        f.Clock.Advance(TimeSpan.FromSeconds(60));
+        Check(await f.Invoke(browser, "otp/resend", otpToken) is
+            { Status: 200, Value: AuthOtpRequiredResponse { ExpiresInSeconds: 240 } });
+        Check((await f.Finish(browser, oldCode)).Status == 401);
+        var replay = browser.Clone();
+        Check((await f.Finish(browser)).Value is AuthLoginResponse { State: "roleSelectionRequired" });
+        Check((await f.Finish(replay)).Status == 401);
+        browser.Cookies[CsrfCookieName] = otpCookie;
+        Check((await f.Invoke(browser, "select-role", otpToken, ReviewerRole)).Status == 400);
+        Check((await f.Select(browser, ReviewerRole)).Status == 200);
+    }
+
+    private static async Task ParallelOtp()
+    {
+        using var f = new Fixture();
+        var browser = new Browser();
+        await f.Begin(browser, Admin);
+        var csrf = await f.Csrf(browser);
+        var other = browser.Clone();
+        var results = await Task.WhenAll(
+            Task.Run(() => f.Invoke(browser, "otp/verify", csrf, f.Sender.Code)),
+            Task.Run(() => f.Invoke(other, "otp/verify", csrf, f.Sender.Code)));
+        Check(results.Count(r => r.Status == 200) == 1 && results.Count(r => r.Status == 401) == 1);
+        Check(results.Sum(r => r.Cookies.Count(c => c.Name.Value == CookieName && !string.IsNullOrEmpty(c.Value.Value))) == 1);
+    }
+
+    private static async Task RevokeOtp()
+    {
+        using var f = new Fixture();
+        var browser = new Browser();
+        await f.Begin(browser, Admin);
+        var old = browser.Clone();
+        using var restarted = new Fixture(f.Protection);
+        Check((await restarted.Finish(old.Clone(), f.Sender.Code)).Status == 401);
+        Check((await f.Invoke(browser, "logout", await f.Csrf(browser))).Status == 204);
+        Check(!browser.Cookies.ContainsKey(OtpCookieName) && (await f.Finish(old)).Status == 401);
+        await f.Begin(browser, Admin);
+        var replaced = browser.Clone();
+        await f.Begin(browser, Admin);
+        Check((await f.Finish(replaced)).Status == 401 && (await f.Finish(browser)).Status == 200);
+    }
+
+    private static EmailOtpAccount Binding(string user) =>
+        TestOtpSender.Binding(new(long.Parse(user), user, Hash, true,
+            user == Admin ? AdminRole : ReviewerRole, user == Dual, user == Dual ? AdminRole : null));
+
+    private static async Task OtpUnavailable()
+    {
+        using var missingSender = new Fixture(configureSender: false);
+        Check(await missingSender.Begin(new Browser(), Admin) is { Status: 503, Code: "verification_unavailable" });
+        foreach (var binding in new[] { Binding(Admin) with { Email = null }, Binding(Admin) with { VerifiedAt = null } })
+        {
+            using var f = new Fixture();
+            f.ReadOtp = (_, _) => Task.FromResult<EmailOtpAccount?>(binding);
+            Check(await f.Begin(new Browser(), Admin) is { Status: 503, Code: "verification_unavailable" } && f.Sender.Count == 0);
+        }
+        foreach (var failure in new Exception[] { new IOException(), new TimeoutException(), new OperationCanceledException() })
+        {
+            using var f = new Fixture();
+            f.Sender.Delivery = _ => Task.FromException(failure);
+            var browser = new Browser();
+            Check(await f.Begin(browser, Admin) is { Status: 503, Code: "verification_unavailable" });
+            Check(!browser.Cookies.ContainsKey(OtpCookieName) && !browser.Cookies.ContainsKey(CookieName));
+        }
+        using var outage = new Fixture();
+        var pending = new Browser();
+        await outage.Begin(pending, Admin);
+        outage.ReadOtp = (_, _) => throw new IOException();
+        Check((await outage.Finish(pending)).Status == 503);
+        outage.ReadOtp = null;
+        Check((await outage.Finish(pending)).Status == 401);
+    }
+
+    private static async Task ChangesAfterOtp()
+    {
+        using var f = new Fixture();
+        var selection = new Browser();
+        await f.Login(selection, Dual);
+        f.ReadOtp = (_, _) => Task.FromResult<EmailOtpAccount?>(Binding(Dual) with { VerifiedAt = DateTime.UnixEpoch.AddSeconds(1) });
+        Check((await f.Select(selection, ReviewerRole)).Status == 401);
+        f.ReadOtp = null;
+        var signedIn = new Browser();
+        await f.Login(signedIn, Admin);
+        f.ReadOtp = (_, _) => Task.FromResult<EmailOtpAccount?>(Binding(Admin) with { Email = "changed@example.invalid" });
+        Check((await f.Invoke(signedIn, "me")).Status == 401);
+        f.ReadOtp = null;
+        Check((await f.Invoke(signedIn, "me")).Status == 401);
+    }
+
+    private static async Task LegacyCredentials()
+    {
+        using var f = new Fixture();
+        var oldPending = new Browser();
+        var oldToken = Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32));
+        var digest = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.ASCII.GetBytes(oldToken)));
+        var pending = (Dictionary<string, AuthSessionStore.PendingRoleSelection>)typeof(AuthSessionStore)
+            .GetField("pending", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(f.Store)!;
+        pending.Add(digest, new(new VerifiedAccount(long.Parse(Dual), Dual, new[] { ReviewerRole, AdminRole }),
+            f.Clock.GetUtcNow(), f.Clock.GetUtcNow() + AuthSessionStore.PendingLifetime, f.Clock.GetTimestamp(), null));
+        oldPending.Cookies[PendingCookieName] = oldToken;
+        Check((await f.Select(oldPending, ReviewerRole)).Status == 401);
+        Check(f.Store.TryCreateSession(new RoleConfirmationResult(RoleConfirmationStatus.RoleConfirmed,
+            new VerifiedAccount(long.Parse(Admin), Admin, new[] { AdminRole }), activeRoleCode: AdminRole)) is null);
+        var signedIn = new Browser();
+        await f.Login(signedIn, Admin);
+        var ticket = f.Options.TicketDataFormat.Unprotect(signedIn.Cookies[CookieName])!;
+        var identity = (ClaimsIdentity)ticket.Principal.Identity!;
+        identity.RemoveClaim(identity.FindAll("amr").Single(c => c.Value == "email_otp"));
+        signedIn.Cookies[CookieName] = f.Options.TicketDataFormat.Protect(ticket);
+        Check((await f.Invoke(signedIn, "me")).Status == 401);
+    }
+
     private static IConfiguration Config(bool enabled) => new ConfigurationBuilder()
         .AddInMemoryCollection(new Dictionary<string, string?> { ["Auth:EnableDevelopmentLogin"] = enabled.ToString() }).Build();
 
@@ -582,7 +747,10 @@ internal static class DevAuthTests
                     roles.PrimaryRoleCode, roles.HasSecondaryRole, roles.SecondaryRoleCode));
             };
 
-        internal Fixture(IDataProtectionProvider? protection = null, int sessionCapacity = 256)
+        internal TestOtpSender Sender { get; } = new();
+        internal Func<long, CancellationToken, Task<EmailOtpAccount?>>? ReadOtp { get; set; }
+
+        internal Fixture(IDataProtectionProvider? protection = null, int sessionCapacity = 256, bool configureSender = true)
         {
             Protection = protection ?? new EphemeralDataProtectionProvider();
             var environment = new TestEnvironment(Path.GetTempPath());
@@ -595,6 +763,13 @@ internal static class DevAuthTests
             services.AddSingleton(new AuthSessionStore(Clock, sessionCapacity));
             services.AddScoped(provider => new AuthService(ReadCredentials, environment, NullLogger<AuthService>.Instance,
                 ReadRoles, provider.GetRequiredService<AuthSessionStore>()));
+            if (configureSender) services.AddSingleton<IEmailOtpSender>(Sender);
+            services.AddScoped(provider => new EmailOtpService(
+                async (id, token) => ReadOtp is { } read ? await read(id, token) :
+                    await ReadCredentials(id.ToString(CultureInfo.InvariantCulture), token) is { } row
+                        ? TestOtpSender.Binding(row) : null,
+                provider.GetRequiredService<EmailOtpChallengeStore>(), provider.GetService<IEmailOtpSender>(),
+                Clock, provider.GetRequiredService<EmailOtpOptions>()));
             Services = services.BuildServiceProvider();
         }
 
@@ -605,8 +780,17 @@ internal static class DevAuthTests
             return ((AuthCsrfResponse)result.Value!).RequestToken;
         }
 
-        internal async Task<Result> Login(Browser browser, string name, string password = Password) =>
-            await Invoke(browser, "login", await Csrf(browser), name, password);
+        internal async Task<Result> Begin(Browser browser, string name, string password = Password, string? csrf = null) =>
+            await Invoke(browser, "login", csrf ?? await Csrf(browser), name, password);
+
+        internal async Task<Result> Finish(Browser browser, string? code = null) =>
+            await Invoke(browser, "otp/verify", await Csrf(browser), code ?? Sender.Code);
+
+        internal async Task<Result> Login(Browser browser, string name, string password = Password)
+        {
+            var result = await Begin(browser, name, password);
+            return result is { Status: 200, Value: AuthOtpRequiredResponse } ? await Finish(browser) : result;
+        }
 
         internal async Task<Result> Select(Browser browser, string role) =>
             await Invoke(browser, "select-role", await Csrf(browser), role);
@@ -631,6 +815,8 @@ internal static class DevAuthTests
                 {
                     "csrf" => controller.Csrf(),
                     "login" => await controller.Login(new LoginRequest { Username = input, Password = password }, default),
+                    "otp/verify" => await controller.VerifyOtp(new VerifyEmailOtpRequest(input), default),
+                    "otp/resend" => await controller.ResendOtp(default),
                     "select-role" => await controller.SelectRole(new SelectRoleRequest(input), default),
                     "me" => controller.Me(),
                     "logout" => await controller.Logout(),

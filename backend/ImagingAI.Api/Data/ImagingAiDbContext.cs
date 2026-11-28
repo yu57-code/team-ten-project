@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using ImagingAI.Api.Models.Database;
 using Microsoft.EntityFrameworkCore;
@@ -514,9 +514,14 @@ public partial class ImagingAiDbContext : DbContext
             entity.HasKey(e => e.UserId).HasName("user_account_pkey");
 
             entity.ToTable("user_account", "system", table =>
-                table.HasCheckConstraint(
-                    "ck_user_account_distinct_roles",
-                    "secondary_role_id IS NULL OR secondary_role_id <> role_id"));
+            {
+                table.HasCheckConstraint("ck_user_account_distinct_roles",
+                    "secondary_role_id IS NULL OR secondary_role_id <> role_id");
+                table.HasCheckConstraint("ck_user_account_email_nonblank",
+                    "email IS NULL OR (length(email) > 0 AND email !~ '[[:space:][:cntrl:]]')");
+                table.HasCheckConstraint("ck_user_account_email_verified_requires_email",
+                    "email_verified_at IS NULL OR email IS NOT NULL");
+            });
 
             entity.HasIndex(e => e.Username, "user_account_username_key").IsUnique();
 
@@ -527,6 +532,14 @@ public partial class ImagingAiDbContext : DbContext
             entity.Property(e => e.IsActive)
                 .HasDefaultValue(true)
                 .HasColumnName("is_active");
+            // The partial unique index on lower(email) is managed by the PostgreSQL schema scripts.
+            entity.Property(e => e.Email)
+                .HasMaxLength(254)
+                .HasColumnType("character varying(254)")
+                .HasColumnName("email");
+            entity.Property(e => e.EmailVerifiedAt)
+                .HasColumnType("timestamp with time zone")
+                .HasColumnName("email_verified_at");
             entity.Property(e => e.PasswordHash).HasColumnName("password_hash");
             entity.Property(e => e.RoleId).HasColumnName("role_id");
             entity.Property(e => e.SecondaryRoleId)

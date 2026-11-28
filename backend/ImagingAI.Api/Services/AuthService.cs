@@ -15,6 +15,17 @@ public sealed class AuthService
     private const string MedicalReviewer = "MEDICAL_REVIEWER";
     private const string SystemAdmin = "SYSTEM_ADMIN";
 
+    private sealed class RoleGrant(EmailOtpAccount binding, string? activeRole = null)
+    {
+        internal EmailOtpAccount Binding { get; } = binding;
+        internal string? ActiveRole { get; } = activeRole;
+        internal int Consumed;
+    }
+
+    internal static EmailOtpAccount? ConsumeRoleGrant(object? grant, string? activeRole = null) =>
+        grant is RoleGrant issued && issued.ActiveRole == activeRole && Interlocked.Exchange(ref issued.Consumed, 1) == 0
+            ? issued.Binding : null;
+
     private static readonly HashSet<string> DevelopmentAccounts = new(StringComparer.Ordinal)
     {
         "413570452", "413570438", "413570359", "413570309"
@@ -125,36 +136,31 @@ public sealed class AuthService
             new VerifiedAccount(account.UserId, account.Username, roles));
     }
 
-    public async Task<RoleConfirmationResult> BeginRoleConfirmationAsync(
-        LoginRequest? request, CancellationToken cancellationToken = default)
+    internal async Task<RoleConfirmationResult> CompleteOtpAsync(EmailOtpService otp, object? proof,
+        CancellationToken cancellationToken)
     {
-        var credentials = await VerifyCredentialsAsync(request, cancellationToken);
-        if (credentials.Status != CredentialVerificationStatus.CredentialsVerified || credentials.Account is not { } account)
-        {
-            return new(credentials.Status switch
-            {
-                CredentialVerificationStatus.InvalidRequest => RoleConfirmationStatus.InvalidRequest,
-                CredentialVerificationStatus.AccountStoreUnavailable => RoleConfirmationStatus.AccountStoreUnavailable,
-                _ => RoleConfirmationStatus.InvalidCredentials
-            });
-        }
+        var binding = otp.ConsumeProof(proof);
+        if (binding is null || !IsEligible(binding.Username))
+            return new(RoleConfirmationStatus.InvalidSelection);
 
-        if (account.RequiresRoleSelection)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var token = pendingRoles.TryCreate(account);
-            return token is null
-                ? new(RoleConfirmationStatus.PendingSelectionUnavailable)
-                : new(RoleConfirmationStatus.RoleSelectionRequired, account, pendingRoleToken: token);
-        }
-
-        return await ConfirmCurrentRoleAsync(account, account.RoleCodes[0], cancellationToken);
+        var roles = binding.SecondaryRoleId.HasValue
+            ? Array.AsReadOnly(new[] { binding.PrimaryRole!, binding.SecondaryRole! })
+            : Array.AsReadOnly(new[] { binding.PrimaryRole! });
+        var account = new VerifiedAccount(binding.Id, binding.Username, roles);
+        var result = await ConfirmCurrentRoleAsync(account, roles[0], binding, otp, cancellationToken);
+        if (result.Status != RoleConfirmationStatus.RoleConfirmed || !account.RequiresRoleSelection)
+            return result;
+        cancellationToken.ThrowIfCancellationRequested();
+        var token = pendingRoles.TryCreate(account, new RoleGrant(binding));
+        return token is null
+            ? new(RoleConfirmationStatus.PendingSelectionUnavailable)
+            : new(RoleConfirmationStatus.RoleSelectionRequired, account, pendingRoleToken: token);
     }
 
-    public async Task<RoleConfirmationResult> ConfirmSelectedRoleAsync(
+    internal async Task<RoleConfirmationResult> ConfirmSelectedRoleAsync(EmailOtpService otp,
         string? pendingToken, string? selectedRoleCode, CancellationToken cancellationToken = default)
     {
-        if (!environment.IsDevelopment() || pendingToken is null || pendingRoles.Find(pendingToken) is not { } pending)
+        if (!environment.IsDevelopment() || pendingToken is null || pendingRoles.Find(pendingToken) is not { OtpBinding: { } binding } pending)
             return new(RoleConfirmationStatus.InvalidSelection);
 
         try
@@ -162,7 +168,7 @@ public sealed class AuthService
             if (selectedRoleCode is null || !pending.Account.RoleCodes.Contains(selectedRoleCode, StringComparer.Ordinal))
                 return new(RoleConfirmationStatus.InvalidSelection, roleNotAllowed: true);
 
-            var result = await ConfirmCurrentRoleAsync(pending.Account, selectedRoleCode, cancellationToken);
+            var result = await ConfirmCurrentRoleAsync(pending.Account, selectedRoleCode, binding, otp, cancellationToken);
             if (result.Status != RoleConfirmationStatus.RoleConfirmed)
                 return result;
 
@@ -181,15 +187,20 @@ public sealed class AuthService
     public bool CancelPendingRoleSelection(string? pendingToken) => pendingRoles.Cancel(pendingToken);
 
     private async Task<RoleConfirmationResult> ConfirmCurrentRoleAsync(
-        VerifiedAccount account, string role, CancellationToken cancellationToken)
+        VerifiedAccount account, string role, EmailOtpAccount binding, EmailOtpService otp,
+        CancellationToken cancellationToken)
     {
         var (status, current) = await ReadCurrentAccountAsync(account.UserId, account.Username, cancellationToken);
         if (current is null)
             return new(status);
 
-        return current.RoleCodes.Contains(role, StringComparer.Ordinal)
-            ? new(RoleConfirmationStatus.RoleConfirmed, current, activeRoleCode: role)
-            : new(RoleConfirmationStatus.InvalidSelection, roleNotAllowed: true);
+        if (!binding.MatchesRoles(current.RoleCodes) || !current.RoleCodes.Contains(role, StringComparer.Ordinal))
+            return new(RoleConfirmationStatus.InvalidSelection);
+        var bindingStatus = await otp.RevalidateAsync(binding, cancellationToken);
+        return bindingStatus == RoleConfirmationStatus.RoleConfirmed
+            ? new(RoleConfirmationStatus.RoleConfirmed, current, activeRoleCode: role,
+                authorization: new RoleGrant(binding, role))
+            : new(bindingStatus);
     }
 
     internal async Task<RoleConfirmationStatus> RevalidateSessionAsync(

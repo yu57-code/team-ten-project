@@ -7,6 +7,9 @@ public enum AuthApiStatus
     CsrfReady,
     Authenticated,
     RoleSelectionRequired,
+    OtpRequired,
+    InvalidOtp,
+    VerificationPending,
     LoggedOut,
     InvalidCredentials,
     InvalidRequest,
@@ -45,4 +48,5 @@ public sealed record AuthApiResult(
     AuthApiIdentity? Identity = null,
     IReadOnlyList<UserRole>? AvailableRoles = null,
     int? ExpiresInSeconds = null,
-    [property: JsonIgnore] AuthCsrfToken? CsrfToken = null);
+    [property: JsonIgnore] AuthCsrfToken? CsrfToken = null,
+    int? ResendAfterSeconds = null);

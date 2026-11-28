@@ -38,23 +38,89 @@ public sealed class AuthController(AuthService auth, AuthSessionStore sessions,
             return Failure(429, "rate_limited");
         }
 
+        CancelOtp();
         CancelPending();
         if (Request.Cookies.ContainsKey(CookieName))
             await HttpContext.SignOutAsync(Scheme);
 
-        var result = await auth.BeginRoleConfirmationAsync(request, cancellationToken);
-        if (result.Status == RoleConfirmationStatus.RoleSelectionRequired)
-        {
-            Response.Cookies.Append(PendingCookieName, result.PendingRoleToken!,
-                AuxiliaryCookie(AuthSessionStore.PendingLifetime));
-            Record("role_selection_required", result.UserId);
-            return Ok(new AuthLoginResponse("roleSelectionRequired",
-                AvailableRoleCodes: result.AvailableRoleCodes, ExpiresInSeconds: (int)AuthSessionStore.PendingLifetime.TotalSeconds));
-        }
+        var credentials = await auth.VerifyCredentialsAsync(request, cancellationToken);
+        if (credentials.Account is not { } account)
+            return credentials.Status == CredentialVerificationStatus.AccountStoreUnavailable
+                ? Failure(503, "account_store_unavailable") : Failure(401, "invalid_credentials");
 
-        return result.Status == RoleConfirmationStatus.RoleConfirmed
-            ? await SignInAsync(result)
-            : RoleFailure(result);
+        var result = await Otp.CreateAsync(account, HttpContext.Connection.RemoteIpAddress!, cancellationToken);
+        if (result is not { Status: EmailOtpStatus.Pending, ChallengeId: { } challenge })
+            return OtpFailure(result, starting: true);
+
+        Response.Cookies.Append(OtpCookieName, challenge, AuxiliaryCookie());
+        RotateCsrf();
+        return OtpRequired(result);
+    }
+
+    [HttpPost("otp/verify")]
+    [RequestSizeLimit(8192)]
+    public async Task<IActionResult> VerifyOtp([FromBody] VerifyEmailOtpRequest? request,
+        CancellationToken cancellationToken)
+    {
+        if (!await HasValidCsrfAsync()) return Failure(400, "invalid_csrf");
+        if (User.Identity?.IsAuthenticated == true) return Failure(403, "logout_required");
+        if (!ModelState.IsValid || !EmailOtpCode.IsValid(request?.Code)) return Failure(400, "invalid_request");
+        if (Request.Cookies[OtpCookieName] is not { } challenge || Request.Cookies.ContainsKey(PendingCookieName))
+            return Failure(401, "invalid_otp");
+
+        var result = await Otp.VerifyAsync(challenge, HttpContext.Connection.RemoteIpAddress!, request!.Code, cancellationToken);
+        if (result.Status != EmailOtpStatus.Verified)
+            return OtpFailure(result);
+
+        Response.Cookies.Delete(OtpCookieName, AuxiliaryCookie());
+        RotateCsrf();
+        var role = await auth.CompleteOtpAsync(Otp, result.Proof, cancellationToken);
+        if (role.Status == RoleConfirmationStatus.RoleSelectionRequired)
+        {
+            Response.Cookies.Append(PendingCookieName, role.PendingRoleToken!,
+                AuxiliaryCookie(AuthSessionStore.PendingLifetime));
+            Record("role_selection_required", role.UserId);
+            return Ok(new AuthLoginResponse("roleSelectionRequired",
+                AvailableRoleCodes: role.AvailableRoleCodes, ExpiresInSeconds: (int)AuthSessionStore.PendingLifetime.TotalSeconds));
+        }
+        return role.Status == RoleConfirmationStatus.RoleConfirmed
+            ? await SignInAsync(role) : RoleFailure(role);
+    }
+
+    [HttpPost("otp/resend")]
+    [RequestSizeLimit(8192)]
+    public async Task<IActionResult> ResendOtp(CancellationToken cancellationToken)
+    {
+        if (!await HasValidCsrfAsync()) return Failure(400, "invalid_csrf");
+        if (User.Identity?.IsAuthenticated == true) return Failure(403, "logout_required");
+        if (Request.Cookies[OtpCookieName] is not { } challenge || Request.Cookies.ContainsKey(PendingCookieName))
+            return Failure(401, "invalid_otp");
+
+        var result = await Otp.ResendAsync(challenge, HttpContext.Connection.RemoteIpAddress!, cancellationToken);
+        if (result.Status is EmailOtpStatus.DeliveryFailed or EmailOtpStatus.Unavailable or EmailOtpStatus.Expired)
+        {
+            Response.Cookies.Delete(OtpCookieName, AuxiliaryCookie());
+            RotateCsrf();
+        }
+        return result.Status == EmailOtpStatus.Pending ? OtpRequired(result) : OtpFailure(result);
+    }
+
+    private EmailOtpService Otp => HttpContext.RequestServices.GetRequiredService<EmailOtpService>();
+
+    private IActionResult OtpRequired(EmailOtpResult result) =>
+        Ok(new AuthOtpRequiredResponse("otpRequired", result.ExpiresInSeconds, result.RetryAfterSeconds));
+
+    private IActionResult OtpFailure(EmailOtpResult result, bool starting = false)
+    {
+        if (result.Status == EmailOtpStatus.RateLimited)
+        {
+            SetRetryAfter(HttpContext, result.RetryAfterSeconds > 0 ? result.RetryAfterSeconds : 900);
+            return Failure(429, "rate_limited");
+        }
+        if (result.Status == EmailOtpStatus.Busy) return Failure(409, "verification_pending");
+        if (starting || result.Status is EmailOtpStatus.Unavailable or EmailOtpStatus.DeliveryFailed)
+            return Failure(503, "verification_unavailable");
+        return Failure(401, "invalid_otp");
     }
 
     [HttpPost("select-role")]
@@ -72,8 +138,9 @@ public sealed class AuthController(AuthService auth, AuthSessionStore sessions,
             return Failure(400, "invalid_request");
         }
 
+        if (Request.Cookies.ContainsKey(OtpCookieName)) return Failure(401, "invalid_role_selection");
         var pending = Request.Cookies[PendingCookieName];
-        var result = await auth.ConfirmSelectedRoleAsync(pending, request.RoleCode, cancellationToken);
+        var result = await auth.ConfirmSelectedRoleAsync(Otp, pending, request.RoleCode, cancellationToken);
         if (pending is not null)
             Response.Cookies.Delete(PendingCookieName, AuxiliaryCookie());
         return result.Status == RoleConfirmationStatus.RoleConfirmed
@@ -104,6 +171,7 @@ public sealed class AuthController(AuthService auth, AuthSessionStore sessions,
 
         if (User.FindFirstValue(SessionClaim) is { } sessionId)
             sessions.RevokeSession(sessionId);
+        CancelOtp();
         CancelPending();
         await HttpContext.SignOutAsync(Scheme);
         Response.Cookies.Delete(CsrfCookieName, AuxiliaryCookie());
@@ -153,6 +221,16 @@ public sealed class AuthController(AuthService auth, AuthSessionStore sessions,
             return false;
         }
         return await antiforgery.Service.IsRequestValidAsync(HttpContext);
+    }
+
+    private void RotateCsrf() => Response.Cookies.Delete(CsrfCookieName, AuxiliaryCookie());
+
+    private void CancelOtp()
+    {
+        if (Request.Cookies[OtpCookieName] is not { } challenge) return;
+        Otp.Revoke(challenge, HttpContext.Connection.RemoteIpAddress!);
+        Response.Cookies.Delete(OtpCookieName, AuxiliaryCookie());
+        RotateCsrf();
     }
 
     private void CancelPending()

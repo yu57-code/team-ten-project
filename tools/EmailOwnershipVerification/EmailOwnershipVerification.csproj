@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="MailKit" Version="5.0.0" />
+    <PackageReference Include="Npgsql" Version="8.0.6" />
+    <Using Include="Microsoft.Extensions.Configuration" />
+    <Using Include="Microsoft.Extensions.Logging" />
+    <InternalsVisibleTo Include="Phase78.Tests" />
+    <Compile Include="../../backend/ImagingAI.Api/Services/EmailOtp/GmailSmtp*.cs" LinkBase="Shared" />
+    <Compile Include="../../backend/ImagingAI.Api/Services/EmailOtp/EmailOtpContracts.cs" Link="Shared/EmailOtpContracts.cs" />
+  </ItemGroup>
+</Project>

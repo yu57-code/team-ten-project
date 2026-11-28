@@ -19,6 +19,10 @@ public partial class UserAccount
 
     public bool IsActive { get; set; }
 
+    public string? Email { get; set; }
+
+    public DateTime? EmailVerifiedAt { get; set; }
+
     public virtual ICollection<AuditTrail> AuditTrails { get; set; } = new List<AuditTrail>();
 
     public virtual ICollection<CaseResult> CaseResults { get; set; } = new List<CaseResult>();

@@ -211,6 +211,7 @@ public static class DevAuthWebRegistration
     {
         var path = request.Path.Value?.ToLowerInvariant();
         return HttpMethods.IsGet(request.Method) && path is ("/api/auth/csrf" or "/api/auth/me") ||
-               HttpMethods.IsPost(request.Method) && path is ("/api/auth/login" or "/api/auth/select-role" or "/api/auth/logout");
+               HttpMethods.IsPost(request.Method) && path is ("/api/auth/login" or "/api/auth/otp/verify" or
+                   "/api/auth/otp/resend" or "/api/auth/select-role" or "/api/auth/logout");
     }
 }

@@ -12,6 +12,7 @@ using Microsoft.AspNetCore.Mvc.ApplicationParts;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using ImagingAI.Api.Controllers;
+using ImagingAI.Api.Data;
 using ImagingAI.Api.Services;
 using ImagingAI.Api.Models;
 using static ImagingAI.Api.Services.AuthSessionStore;
@@ -23,6 +24,8 @@ internal static class AuthRegistration
     internal const string Scheme = "ImagingAI.DevAuth";
     internal const string CookieName = "__Host-ImagingAI.DevAuth";
     internal const string PendingCookieName = "__Host-ImagingAI.DevRole";
+    internal const string OtpCookieName = "__Host-ImagingAI.DevOtp";
+    private const string EmailOtpMethod = "email_otp";
     internal const string CsrfCookieName = "__Host-ImagingAI.DevCsrf";
     internal const string CsrfHeaderName = "X-CSRF-TOKEN";
     internal const string SessionClaim = "imagingai:session_id";
@@ -45,6 +48,22 @@ internal static class AuthRegistration
         // The auth controller requests this scheme explicitly. No implicit scheme for business APIs.
         AppContext.SetSwitch("Microsoft.AspNetCore.Authentication.SuppressAutoDefaultScheme", true);
         services.TryAddSingleton(TimeProvider.System);
+        services.TryAddSingleton<EmailOtpOptions>();
+        if (GmailSmtpOptions.Read(configuration) is { } smtp)
+        {
+            services.TryAddSingleton<IEmailOtpSender>(provider => new GmailSmtpOtpSender(
+                smtp, timeout => new MailKitGmailSmtpTransport(timeout),
+                provider.GetRequiredService<TimeProvider>(), provider.GetRequiredService<ILogger<GmailSmtpOtpSender>>()));
+        }
+        services.TryAddSingleton(services => new EmailOtpChallengeStore(
+            services.GetRequiredService<TimeProvider>(), services.GetRequiredService<EmailOtpOptions>()));
+        services.TryAddScoped(services =>
+        {
+            var database = services.GetRequiredService<ImagingAiDbContext>();
+            return new EmailOtpService((id, token) => EmailOtpService.ReadAccountAsync(database, id, token),
+                services.GetRequiredService<EmailOtpChallengeStore>(), services.GetService<IEmailOtpSender>(),
+                services.GetRequiredService<TimeProvider>(), services.GetRequiredService<EmailOtpOptions>());
+        });
         services.TryAddSingleton(services => new AuthProtection(CreateLoginProtection()));
         services.AddSingleton<AuthSessionStore>(services => new(services.GetRequiredService<TimeProvider>(), 256));
         services.AddScoped<AuthService>();
@@ -100,7 +119,10 @@ internal static class AuthRegistration
             return;
         }
 
-        var operation = IsPost(context, "login") ? "login" : IsPost(context, "select-role") ? "select-role" : null;
+        var operation = IsPost(context, "login") ? "login" :
+            IsPost(context, "select-role") ? "select-role" :
+            IsPost(context, "otp/verify") ? "otp-verify" :
+            IsPost(context, "otp/resend") ? "otp-resend" : null;
         if (operation is not null)
         {
             var limiter = context.RequestServices.GetRequiredService<DevelopmentAuthRateLimiter>();
@@ -132,7 +154,8 @@ internal static class AuthRegistration
             new Claim(ClaimTypes.Role, session.ActiveRoleCode),
             new Claim(SessionClaim, session.Id),
             new Claim(DevelopmentClaim, "true"),
-            new Claim("amr", "pwd")
+            new Claim("amr", "pwd"),
+            new Claim("amr", EmailOtpMethod)
         }, Scheme));
 
     private static async Task ValidatePrincipalAsync(CookieValidatePrincipalContext context)
@@ -143,6 +166,8 @@ internal static class AuthRegistration
         var session = store.FindSession(principal.FindFirstValue(SessionClaim));
         if (session is null || !IsLocalHttps(context.HttpContext) ||
             principal.Identity?.AuthenticationType != Scheme ||
+            !principal.FindAll("amr").Select(claim => claim.Value)
+                .SequenceEqual(new[] { "pwd", EmailOtpMethod }, StringComparer.Ordinal) ||
             principal.FindFirstValue(DevelopmentClaim) != "true" ||
             principal.FindFirstValue(ClaimTypes.NameIdentifier) != session.UserId.ToString(CultureInfo.InvariantCulture) ||
             principal.FindFirstValue(ClaimTypes.Name) != session.Username ||
@@ -158,6 +183,11 @@ internal static class AuthRegistration
 
         var auth = services.GetRequiredService<AuthService>();
         var status = await auth.RevalidateSessionAsync(session, context.HttpContext.RequestAborted);
+        if (status == RoleConfirmationStatus.RoleConfirmed)
+        {
+            var otp = services.GetRequiredService<EmailOtpService>();
+            status = await otp.RevalidateAsync(session.OtpBinding, context.HttpContext.RequestAborted);
+        }
         if (status == RoleConfirmationStatus.AccountStoreUnavailable)
         {
             context.HttpContext.Items[StoreUnavailable] = true;
@@ -276,9 +306,16 @@ public sealed class DevelopmentAntiforgery : IDisposable
 
     private sealed class SessionAntiforgeryBinding : IAntiforgeryAdditionalDataProvider
     {
-        public string GetAdditionalData(HttpContext context) =>
-            context.User.FindFirstValue(AuthRegistration.SessionClaim) is { } id
-                ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(id))) : "";
+        public string GetAdditionalData(HttpContext context)
+        {
+            var binding = context.User.FindFirstValue(AuthRegistration.SessionClaim) is { } session
+                ? "session:" + session
+                : context.Request.Cookies[AuthRegistration.OtpCookieName] is { } otp
+                    ? "otp:" + otp
+                    : context.Request.Cookies[AuthRegistration.PendingCookieName] is { } role
+                        ? "role:" + role : "";
+            return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(binding)));
+        }
 
         public bool ValidateAdditionalData(HttpContext context, string additionalData) =>
             string.Equals(GetAdditionalData(context), additionalData, StringComparison.Ordinal);

@@ -1,4 +1,5 @@
 @using ImagingAI.Web.Services.Auth
+@implements IDisposable
 @page "/"
 @page "/login"
 @layout EmptyLayout
@@ -100,6 +101,43 @@
                 </MudButton>
             </form>
         }
+        else if (_step == 2 && Flow is not null)
+        {
+            <form class="lf-body" method="post" action="/login" @ref="_otpForm"
+                  @onsubmit="VerifyRealOtpAsync" @onsubmit:preventDefault>
+                <div class="lf-heading">
+                    <h2>輸入驗證碼</h2>
+                    <p>請輸入寄送至已驗證電子郵件的 6 位數驗證碼。</p>
+                </div>
+                <div class="lf-otp-row">
+                    @for (var i = 0; i < OtpLength; i++)
+                    {
+                        <input class="lf-otp" aria-label="驗證碼第 @(i + 1) 碼" inputmode="numeric"
+                               data-otp-digit placeholder="·" autocomplete="@(i == 0 ? "one-time-code" : "off")"
+                               disabled="@(_busy || Remaining(_deadline) == 0)" />
+                    }
+                </div>
+                @if (_error is not null)
+                {
+                    <p class="lf-error" role="alert">@_error</p>
+                }
+                <p class="lf-muted">驗證碼剩餘 @Remaining(_deadline) 秒</p>
+                <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
+                           Class="lf-submit" ButtonType="ButtonType.Submit" Disabled="@(_busy || Remaining(_deadline) == 0)"
+                           EndIcon="@Icons.Material.Filled.ArrowForward">
+                    驗證並登入
+                </MudButton>
+                <div class="lf-row">
+                    <button type="button" class="lf-link" disabled="@_busy" @onclick="CancelRealAsync">← 返回</button>
+                    <button type="button" class="lf-link" disabled="@(_busy || Remaining(_deadline) == 0 || Remaining(_resendAt) > 0)"
+                            @onclick="ResendRealOtpAsync">重新發送</button>
+                    @if (Remaining(_resendAt) is var wait && wait > 0)
+                    {
+                        <span class="lf-muted">@wait 秒後可重新發送</span>
+                    }
+                </div>
+            </form>
+        }
         else if (_step == 2)
         {
             <div class="lf-body">
@@ -149,19 +187,26 @@
                 {
                     <p class="lf-error" role="alert">@_error</p>
                 }
-                <p class="lf-muted lf-muted--lg">系統將依帳號角色導向對應工作台（原型中可直接選擇）：</p>
+                <p class="lf-muted lf-muted--lg">@(Flow is null
+                    ? "系統將依帳號角色導向對應工作台（原型中可直接選擇）："
+                    : "請選擇要登入的工作台：")</p>
+                @if (Flow is not null)
+                {
+                    <p class="lf-muted">角色選擇剩餘 @Remaining(_deadline) 秒</p>
+                    <button type="button" class="lf-link" disabled="@_busy" @onclick="CancelRealAsync">← 返回</button>
+                }
 
                 @if (Flow is null || _roles.Contains(UserRole.MEDICAL_REVIEWER))
                 {
                     <MudButton Variant="Variant.Filled" Color="Color.Primary" DropShadow="false" FullWidth="true"
-                               Class="lf-submit" Disabled="_busy" OnClick="() => EnterAsync(UserRole.MEDICAL_REVIEWER)">
+                               Class="lf-submit" Disabled="@(_busy || (Flow is not null && Remaining(_deadline) == 0))" OnClick="() => EnterAsync(UserRole.MEDICAL_REVIEWER)">
                         醫療／資料審核人員
                     </MudButton>
                 }
                 @if (Flow is null || _roles.Contains(UserRole.SYSTEM_ADMIN))
                 {
                     <MudButton Variant="Variant.Outlined" Color="Color.Primary" FullWidth="true"
-                               Class="lf-submit lf-submit--outline" Disabled="_busy" OnClick="() => EnterAsync(UserRole.SYSTEM_ADMIN)">
+                               Class="lf-submit lf-submit--outline" Disabled="@(_busy || (Flow is not null && Remaining(_deadline) == 0))" OnClick="() => EnterAsync(UserRole.SYSTEM_ADMIN)">
                         系統管理／維護人員
                     </MudButton>
                 }
@@ -216,15 +261,42 @@
     private bool _interactive;
     private IReadOnlyList<UserRole> _roles = [];
 
-    protected override void OnAfterRender(bool firstRender)
+    private ElementReference _otpForm;
+    private CancellationTokenSource? _countdown;
+    private DateTimeOffset _deadline;
+    private DateTimeOffset _resendAt;
+    private bool _prepareOtp;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (firstRender && Flow is not null)
+        if (Flow is null) return;
+        if (firstRender)
         {
             Flow.EnableBrowserInterop();
+            var recovery = await Flow.RecoverLoginAsync();
+            if (recovery.Status == AuthApiStatus.Authenticated)
+            {
+                Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
+                return;
+            }
+            if (recovery.Status != AuthApiStatus.LoggedOut)
+                _error = $"無法確認先前的驗證已取消。{DevAuthFlow.Error(recovery)}";
             _interactive = true;
             StateHasChanged();
         }
+        if (_prepareOtp && _step == 2)
+        {
+            _prepareOtp = false;
+            try { await Flow.PrepareOtpAsync(_otpForm); }
+            catch (Microsoft.JSInterop.JSException)
+            {
+                ResetRealState();
+                _error = "無法初始化驗證輸入，請重新登入。";
+                StateHasChanged();
+            }
+        }
     }
+
 
     private Task SubmitMockButtonAsync() =>
         Flow is null ? SubmitCredentialsAsync() : Task.CompletedTask;
@@ -267,12 +339,15 @@
             try
             {
                 var response = await Flow.LoginAsync(_form);
-                if (response.Status == AuthApiStatus.Authenticated)
-                    Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
-                else if (response.Status == AuthApiStatus.RoleSelectionRequired && response.AvailableRoles is { } roles)
+                if (response is { Status: AuthApiStatus.OtpRequired, ExpiresInSeconds: int expires,
+                                  ResendAfterSeconds: int resend })
                 {
-                    _roles = roles;
-                    _step = 3;
+                    var now = DateTimeOffset.UtcNow;
+                    _deadline = now.AddSeconds(expires);
+                    _resendAt = now.AddSeconds(resend);
+                    _prepareOtp = true;
+                    _step = 2;
+                    StartCountdown();
                 }
                 else
                     _error = DevAuthFlow.Error(response);
@@ -351,6 +426,127 @@
         _step = 1;
     }
 
+    private static int Remaining(DateTimeOffset until) =>
+        Math.Max(0, (int)Math.Ceiling((until - DateTimeOffset.UtcNow).TotalSeconds));
+
+    private void StartCountdown()
+    {
+        StopCountdown();
+        _countdown = new CancellationTokenSource();
+        _ = TickAsync(_countdown.Token);
+    }
+
+    private async Task TickAsync(CancellationToken token)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await InvokeAsync(StateHasChanged);
+                if (Remaining(_deadline) == 0) break;
+            }
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+    }
+
+    private void StopCountdown()
+    {
+        _countdown?.Cancel();
+        _countdown?.Dispose();
+        _countdown = null;
+    }
+
+    public void Dispose() => StopCountdown();
+
+    private async Task VerifyRealOtpAsync()
+    {
+        if (Flow is null || _busy || _step != 2 || Remaining(_deadline) == 0) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Flow.VerifyOtpAsync(_otpForm);
+            if (result.Status == AuthApiStatus.Authenticated)
+            {
+                ResetRealState();
+                await ContinueAuthenticatedAsync();
+            }
+            else if (result is { Status: AuthApiStatus.RoleSelectionRequired, AvailableRoles: { } roles,
+                         ExpiresInSeconds: int expires })
+            {
+                _roles = roles;
+                _deadline = DateTimeOffset.UtcNow.AddSeconds(expires);
+                _step = 3;
+                StartCountdown();
+            }
+            else if (result.Status is AuthApiStatus.ProxyError or AuthApiStatus.NetworkError or
+                     AuthApiStatus.ProtocolError or AuthApiStatus.ServiceUnavailable)
+                ResetRealState();
+            if (result.Status is not (AuthApiStatus.Authenticated or AuthApiStatus.RoleSelectionRequired))
+                _error = DevAuthFlow.Error(result);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ResendRealOtpAsync()
+    {
+        if (Flow is null || _busy || _step != 2 || Remaining(_deadline) == 0 || Remaining(_resendAt) > 0) return;
+        _busy = true;
+        _error = null;
+        try
+        {
+            var result = await Flow.ResendOtpAsync(_otpForm);
+            if (result is { Status: AuthApiStatus.OtpRequired, ExpiresInSeconds: int expires,
+                            ResendAfterSeconds: int resend })
+            {
+                var now = DateTimeOffset.UtcNow;
+                var updatedDeadline = now.AddSeconds(expires);
+                if (updatedDeadline < _deadline) _deadline = updatedDeadline;
+                _resendAt = now.AddSeconds(resend);
+                return;
+            }
+            if (result is { Status: AuthApiStatus.RateLimited, RetryAfter: TimeSpan wait })
+                _resendAt = DateTimeOffset.UtcNow.Add(wait < TimeSpan.FromMinutes(15) ? wait : TimeSpan.FromMinutes(15));
+            else if (result.Status is not AuthApiStatus.VerificationPending)
+                ResetRealState();
+            _error = DevAuthFlow.Error(result);
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task CancelRealAsync()
+    {
+        if (_busy || Flow is null) return;
+        _busy = true;
+        ResetRealState();
+        try
+        {
+            var result = await Flow.LogoutAsync();
+            _error = result.Status == AuthApiStatus.LoggedOut
+                ? null : $"無法確認伺服器已取消驗證。{DevAuthFlow.Error(result)}";
+        }
+        finally { _busy = false; }
+    }
+
+    private async Task ContinueAuthenticatedAsync()
+    {
+        var confirmed = await Flow!.MeAsync();
+        if (confirmed.Status == AuthApiStatus.Authenticated)
+            Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
+        else
+            _error = DevAuthFlow.Error(confirmed);
+    }
+
+    private void ResetRealState()
+    {
+        StopCountdown();
+        _roles = [];
+        _prepareOtp = false;
+        _step = 1;
+        _password = string.Empty;
+    }
+
     private void ShowForgotPassword() =>
         Snackbar.Add("請聯絡系統管理人員重設密碼。", Severity.Info);
 
@@ -364,7 +560,7 @@
 
         if (Flow is not null)
         {
-            if (_step != 3 || !_roles.Contains(role))
+            if (_step != 3 || Remaining(_deadline) == 0 || !_roles.Contains(role))
                 return;
 
             _busy = true;
@@ -372,13 +568,11 @@
             try
             {
                 var response = await Flow.SelectRoleAsync(role);
+                ResetRealState();
                 if (response.Status == AuthApiStatus.Authenticated)
-                    Nav.NavigateTo(DevAuthWebRegistration.IdentityPath, forceLoad: true);
+                    await ContinueAuthenticatedAsync();
                 else
-                {
-                    _step = 1;
                     _error = DevAuthFlow.Error(response);
-                }
             }
             finally
             {

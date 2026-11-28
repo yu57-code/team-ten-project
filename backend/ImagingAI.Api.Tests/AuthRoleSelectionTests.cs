@@ -94,7 +94,7 @@ internal static class AuthRoleSelectionTests
     {
         var fixture = new Fixture();
         var token = await fixture.Challenge();
-        var result = await fixture.Service().ConfirmSelectedRoleAsync(token, role);
+        var result = await fixture.Confirm(token, role);
         Check(result is { Status: RoleConfirmationStatus.RoleConfirmed, PendingRoleToken: null } &&
               result.ActiveRoleCode == role && result.AvailableRoleCodes.Count == 0);
     }
@@ -145,7 +145,7 @@ internal static class AuthRoleSelectionTests
         var token = await fixture.Challenge();
         var tampered = (token[0] == 'A' ? "B" : "A") + token[1..];
         await ExpectInvalid(fixture, tampered, AdminRole);
-        Check((await fixture.Service().ConfirmSelectedRoleAsync(token, AdminRole)).ActiveRoleCode == AdminRole);
+        Check((await fixture.Confirm(token, AdminRole)).ActiveRoleCode == AdminRole);
     }
 
     private static async Task TestDeadline(TimeSpan delay, bool valid)
@@ -153,7 +153,7 @@ internal static class AuthRoleSelectionTests
         var fixture = new Fixture();
         var token = await fixture.Challenge();
         fixture.Clock.Advance(delay);
-        var result = await fixture.Service().ConfirmSelectedRoleAsync(token, ReviewerRole);
+        var result = await fixture.Confirm(token, ReviewerRole);
         Check(result.Status == (valid ? RoleConfirmationStatus.RoleConfirmed : RoleConfirmationStatus.InvalidSelection));
     }
 
@@ -173,7 +173,7 @@ internal static class AuthRoleSelectionTests
     {
         var fixture = new Fixture();
         var token = await fixture.Challenge();
-        Check((await fixture.Service().ConfirmSelectedRoleAsync(token, ReviewerRole)).ActiveRoleCode == ReviewerRole);
+        Check((await fixture.Confirm(token, ReviewerRole)).ActiveRoleCode == ReviewerRole);
         await ExpectInvalid(fixture, token, ReviewerRole);
     }
 
@@ -192,8 +192,8 @@ internal static class AuthRoleSelectionTests
             return Roles(Credentials(Dual));
         };
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-        var first = Task.Run(() => fixture.Service().ConfirmSelectedRoleAsync(token, ReviewerRole, timeout.Token));
-        var second = Task.Run(() => fixture.Service().ConfirmSelectedRoleAsync(token, AdminRole, timeout.Token));
+        var first = Task.Run(() => fixture.Confirm(token, ReviewerRole, timeout.Token));
+        var second = Task.Run(() => fixture.Confirm(token, AdminRole, timeout.Token));
         await bothReading.Task.WaitAsync(timeout.Token);
         release.SetResult();
         var results = await Task.WhenAll(first, second);
@@ -217,7 +217,7 @@ internal static class AuthRoleSelectionTests
         var fresh = await fixture.Challenge();
         Check(stale != fresh);
         await ExpectInvalid(fixture, stale, ReviewerRole);
-        Check((await fixture.Service().ConfirmSelectedRoleAsync(fresh, ReviewerRole)).ActiveRoleCode == ReviewerRole);
+        Check((await fixture.Confirm(fresh, ReviewerRole)).ActiveRoleCode == ReviewerRole);
     }
 
     private static async Task Capacity()
@@ -225,7 +225,7 @@ internal static class AuthRoleSelectionTests
         var fixture = new Fixture(capacity: 1);
         var first = await fixture.Challenge();
         Check(await fixture.Start() is { Status: RoleConfirmationStatus.PendingSelectionUnavailable, PendingRoleToken: null });
-        Check((await fixture.Service().ConfirmSelectedRoleAsync(first, AdminRole)).ActiveRoleCode == AdminRole);
+        Check((await fixture.Confirm(first, AdminRole)).ActiveRoleCode == AdminRole);
     }
 
     private static async Task DistinctUsers()
@@ -239,8 +239,8 @@ internal static class AuthRoleSelectionTests
             Roles(id == firstAccount.UserId ? firstAccount : secondAccount));
         var first = await fixture.Challenge();
         var second = await fixture.Challenge(Admin);
-        var firstResult = await fixture.Service().ConfirmSelectedRoleAsync(first, ReviewerRole);
-        var secondResult = await fixture.Service().ConfirmSelectedRoleAsync(second, AdminRole);
+        var firstResult = await fixture.Confirm(first, ReviewerRole);
+        var secondResult = await fixture.Confirm(second, AdminRole);
         Check(first != second && firstResult.UserId == firstAccount.UserId && firstResult.Username == Dual &&
               secondResult.UserId == secondAccount.UserId && secondResult.Username == Admin);
     }
@@ -261,8 +261,7 @@ internal static class AuthRoleSelectionTests
         fixture.ReadRoles = (_, _) => Task.FromResult<AuthService.AccountRoles?>(
             Roles(Credentials(Admin)) with { HasSecondaryRole = true, SecondaryRoleCode = ReviewerRole });
         var result = await fixture.Start(Admin);
-        Check(result is { Status: RoleConfirmationStatus.RoleConfirmed, PendingRoleToken: null } &&
-              result.ActiveRoleCode == AdminRole);
+        Check(result is { Status: RoleConfirmationStatus.InvalidSelection, PendingRoleToken: null });
         await ExpectInvalid(fixture, result.PendingRoleToken, ReviewerRole);
     }
 
@@ -271,7 +270,7 @@ internal static class AuthRoleSelectionTests
         var fixture = new Fixture();
         var token = await fixture.Challenge();
         fixture.ReadRoles = (_, _) => throw new NpgsqlException("simulated private detail");
-        var result = await fixture.Service().ConfirmSelectedRoleAsync(token, AdminRole);
+        var result = await fixture.Confirm(token, AdminRole);
         Check(result is { Status: RoleConfirmationStatus.AccountStoreUnavailable, UserId: null, ActiveRoleCode: null } &&
               !JsonSerializer.Serialize(result).Contains("private detail", StringComparison.Ordinal));
         await ExpectInvalid(fixture, token, AdminRole);
@@ -286,13 +285,15 @@ internal static class AuthRoleSelectionTests
         await ExpectInvalid(fixture, token, AdminRole);
     }
 
-    private static Task SafePendingSnapshot()
+    private static async Task SafePendingSnapshot()
     {
         var fixture = new Fixture();
         var original = new[] { ReviewerRole, AdminRole };
-        var token = fixture.Store.TryCreate(new VerifiedAccount(42, Dual, original))!;
+        Check(fixture.Store.TryCreate(new VerifiedAccount(42, Dual, original), new object()) is null);
+        var token = await fixture.Challenge();
         var state = fixture.Store.Find(token)!;
-        original[0] = "CHANGED";
+        try { ((IList<string>)state.Account.RoleCodes)[0] = "CHANGED"; throw new InvalidOperationException(); }
+        catch (NotSupportedException) { }
         Check(state.Account.RoleCodes[0] == ReviewerRole && state.Account.RoleCodes is IList<string> { IsReadOnly: true } &&
               state.ExpiresAt - state.CreatedAt == TimeSpan.FromSeconds(120) &&
               state.Stage == RoleConfirmationStatus.RoleSelectionRequired);
@@ -300,13 +301,12 @@ internal static class AuthRoleSelectionTests
         Check(!json.Contains("password", StringComparison.OrdinalIgnoreCase) &&
               !json.Contains(Hash, StringComparison.Ordinal) && !json.Contains(token, StringComparison.Ordinal));
         Check(new Fixture().Store.Find(token) is null);
-        return Task.CompletedTask;
     }
 
     private static async Task SafeConfirmedResult()
     {
         var fixture = new Fixture();
-        var result = await fixture.Service().ConfirmSelectedRoleAsync(await fixture.Challenge(), AdminRole);
+        var result = await fixture.Confirm(await fixture.Challenge(), AdminRole);
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(result));
         Check(result.Status == RoleConfirmationStatus.RoleConfirmed && result.AvailableRoleCodes.Count == 0 &&
               json.RootElement.EnumerateObject().Select(p => p.Name).SequenceEqual(
@@ -329,7 +329,7 @@ internal static class AuthRoleSelectionTests
 
     private static async Task ExpectInvalid(Fixture fixture, string? token, string role)
     {
-        var result = await fixture.Service().ConfirmSelectedRoleAsync(token, role);
+        var result = await fixture.Confirm(token, role);
         Check(result is { Status: RoleConfirmationStatus.InvalidSelection, ActiveRoleCode: null });
     }
 
@@ -355,8 +355,26 @@ internal static class AuthRoleSelectionTests
 
         public AuthService Service() => new(ReadCredentials, Environment, NullLogger<AuthService>.Instance, ReadRoles, Store);
 
-        public Task<RoleConfirmationResult> Start(string username = Dual, string password = Password) =>
-            Service().BeginRoleConfirmationAsync(new LoginRequest { Username = username, Password = password });
+        private readonly TestOtpSender sender = new();
+        private EmailOtpChallengeStore? otpStore;
+        private EmailOtpService Otp() => new((id, _) => Task.FromResult<EmailOtpAccount?>(
+            TestOtpSender.Binding(ReadCredentials(id.ToString(), default).GetAwaiter().GetResult()!)),
+            otpStore ??= new(Clock, new()), sender, Clock, new());
+
+        public async Task<RoleConfirmationResult> Start(string username = Dual, string password = Password)
+        {
+            var auth = Service();
+            var verified = await auth.VerifyCredentialsAsync(new LoginRequest { Username = username, Password = password });
+            if (verified.Account is not { } account) return new(RoleConfirmationStatus.InvalidCredentials);
+            var otp = Otp();
+            var pending = await otp.CreateAsync(account, System.Net.IPAddress.Loopback);
+            Check(pending is { Status: EmailOtpStatus.Pending, ChallengeId: not null });
+            var completed = await otp.VerifyAsync(pending.ChallengeId!, System.Net.IPAddress.Loopback, sender.Code);
+            return await auth.CompleteOtpAsync(otp, completed.Proof, default);
+        }
+
+        public Task<RoleConfirmationResult> Confirm(string? pending, string? role,
+            CancellationToken token = default) => Service().ConfirmSelectedRoleAsync(Otp(), pending, role, token);
 
         public async Task<string> Challenge(string username = Dual)
         {

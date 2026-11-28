@@ -9,6 +9,19 @@
 
 -- Started on 2026-11-19 17:33:01
 
+-- Create imaging_ai_db and the application role separately, then connect to
+-- imaging_ai_db as postgres before restoring this single-database dump.
+DO $phase7$
+BEGIN
+    IF current_database() <> 'imaging_ai_db' OR current_user <> 'postgres'
+       OR to_regrole('imaging_ai_user') IS NULL THEN
+        RAISE EXCEPTION 'Restore requires imaging_ai_db, postgres, and an existing imaging_ai_user';
+    END IF;
+END
+$phase7$;
+ALTER DATABASE imaging_ai_db OWNER TO postgres;
+ALTER SCHEMA public OWNER TO pg_database_owner;
+
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -29,7 +42,7 @@ SET row_security = off;
 CREATE SCHEMA clinical;
 
 
-ALTER SCHEMA clinical OWNER TO imaging_ai_user;
+ALTER SCHEMA clinical OWNER TO postgres;
 
 --
 -- TOC entry 6 (class 2615 OID 16405)
@@ -49,7 +62,7 @@ ALTER SCHEMA imaging_ai OWNER TO imaging_ai_user;
 CREATE SCHEMA system;
 
 
-ALTER SCHEMA system OWNER TO imaging_ai_user;
+ALTER SCHEMA system OWNER TO postgres;
 
 SET default_tablespace = '';
 
@@ -594,8 +607,19 @@ CREATE TABLE system.user_account (
     role_id bigint NOT NULL,
     secondary_role_id bigint,
     created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    is_active boolean DEFAULT true NOT NULL
+    is_active boolean DEFAULT true NOT NULL,
+    email character varying(254),
+    email_verified_at timestamp with time zone,
+    CONSTRAINT ck_user_account_email_nonblank CHECK (
+        email IS NULL OR (length(email) > 0 AND email !~ '[[:space:][:cntrl:]]')
+    ),
+    CONSTRAINT ck_user_account_email_verified_requires_email CHECK (
+        email_verified_at IS NULL OR email IS NOT NULL
+    )
 );
+
+CREATE UNIQUE INDEX ux_user_account_email_normalized
+    ON system.user_account (lower(email)) WHERE email IS NOT NULL;
 
 
 ALTER TABLE system.user_account OWNER TO postgres;
@@ -1320,11 +1344,15 @@ GRANT SELECT(user_id) ON TABLE system.user_account TO imaging_ai_user;
 
 GRANT SELECT(is_active) ON TABLE system.user_account TO imaging_ai_user;
 
-GRANT USAGE ON SCHEMA system TO imaging_ai_user;
-GRANT SELECT (username, password_hash, role_id, secondary_role_id)
+GRANT CONNECT ON DATABASE imaging_ai_db TO imaging_ai_user;
+GRANT USAGE ON SCHEMA clinical, system, public TO imaging_ai_user;
+REVOKE CREATE ON SCHEMA clinical, system, public FROM imaging_ai_user;
+REVOKE ALL PRIVILEGES ON TABLE system.user_account, system.role FROM imaging_ai_user;
+GRANT SELECT (user_id, username, password_hash, role_id, secondary_role_id,
+              is_active, created_at, email, email_verified_at)
     ON system.user_account TO imaging_ai_user;
-GRANT SELECT (role_id, role_code) ON system.role TO imaging_ai_user;
-
+GRANT SELECT ON system.role TO imaging_ai_user;
+REVOKE TRUNCATE ON ALL TABLES IN SCHEMA clinical, system FROM imaging_ai_user;
 
 -- Completed on 2026-11-19 17:33:02
 

@@ -11,6 +11,11 @@ public sealed class DevAuthFlow(ApiAuthService api, DevAuthStateProvider state)
     public void EnableBrowserInterop() => api.EnableBrowserInterop();
 
     public Task<AuthApiResult> LoginAsync(ElementReference form) => api.LoginWithFormAsync(form);
+    public Task PrepareOtpAsync(ElementReference form) => api.PrepareOtpAsync(form);
+    public Task<AuthApiResult> VerifyOtpAsync(ElementReference form) => api.VerifyOtpAsync(form);
+    public Task<AuthApiResult> ResendOtpAsync(ElementReference form) => api.ResendOtpAsync(form);
+    public Task<AuthApiResult> MeAsync() => api.MeAsync();
+    public Task<AuthApiResult> RecoverLoginAsync() => api.RecoverLoginAsync();
 
     public async Task<AuthApiResult> SelectRoleAsync(UserRole role)
     {
@@ -42,6 +47,8 @@ public sealed class DevAuthFlow(ApiAuthService api, DevAuthStateProvider state)
         AuthApiStatus.InvalidCredentials => "帳號或密碼錯誤，或此帳號無法登入。",
         AuthApiStatus.InvalidRequest => "請確認輸入資料後再試。",
         AuthApiStatus.InvalidCsrf => "安全驗證失敗，請重新整理後再試。",
+        AuthApiStatus.InvalidOtp => "驗證碼錯誤或驗證已失效。請確認驗證碼，或返回重新登入。",
+        AuthApiStatus.VerificationPending => "驗證碼寄送中，請稍後再試。",
         AuthApiStatus.LogoutRequired => "已有登入工作階段，請先登出。",
         AuthApiStatus.RoleNotAllowed or AuthApiStatus.InvalidRoleSelection => "角色選擇已失效或不允許，請重新登入。",
         AuthApiStatus.Unauthorized or AuthApiStatus.InvalidSession => "工作階段已失效，請重新登入。",

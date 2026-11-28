@@ -44,7 +44,8 @@ public enum RoleConfirmationStatus
 public sealed class RoleConfirmationResult
 {
     internal RoleConfirmationResult(RoleConfirmationStatus status, VerifiedAccount? account = null,
-        string? activeRoleCode = null, string? pendingRoleToken = null, bool roleNotAllowed = false)
+        string? activeRoleCode = null, string? pendingRoleToken = null, bool roleNotAllowed = false,
+        object? authorization = null)
     {
         Status = status;
         UserId = account?.UserId;
@@ -56,6 +57,7 @@ public sealed class RoleConfirmationResult
         ConfirmedRoleCodes = status == RoleConfirmationStatus.RoleConfirmed
             ? account!.RoleCodes : Array.Empty<string>();
         RoleNotAllowed = roleNotAllowed;
+        Authorization = authorization;
     }
 
     public RoleConfirmationStatus Status { get; }
@@ -70,10 +72,14 @@ public sealed class RoleConfirmationResult
 
     internal IReadOnlyList<string> ConfirmedRoleCodes { get; }
     internal bool RoleNotAllowed { get; }
+    internal object? Authorization { get; }
 }
 
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 public sealed record SelectRoleRequest(string? RoleCode);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record VerifyEmailOtpRequest(string? Code);
 
 public sealed record AuthCsrfResponse(string RequestToken);
 
@@ -81,3 +87,5 @@ public sealed record AuthIdentityResponse(long UserId, string Username, string A
 
 public sealed record AuthLoginResponse(string State, AuthIdentityResponse? User = null,
     IReadOnlyList<string>? AvailableRoleCodes = null, int? ExpiresInSeconds = null);
+
+public sealed record AuthOtpRequiredResponse(string State, int ExpiresInSeconds, int ResendAfterSeconds);
