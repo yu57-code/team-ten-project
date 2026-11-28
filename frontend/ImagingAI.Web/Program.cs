@@ -1,4 +1,3 @@
-
 using ImagingAI.Web.Components;
 using ImagingAI.Web.Services;
 using ImagingAI.Web.Services.Interfaces;
@@ -40,8 +39,8 @@ builder.Services.AddSingleton<MockDataStore>();
 builder.Services.AddSingleton<
     INavBadgeService, MockNavBadgeService>();
 
-builder.Services.AddSingleton<
-    ICaseService, MockCaseService>();
+// 保留 MockCaseService 實體供總覽頁 fallback 使用
+builder.Services.AddSingleton<MockCaseService>();
 
 // ==========================================
 // 3. 真正呼叫後端 API 的服務
@@ -56,8 +55,7 @@ builder.Services.AddHttpClient<IUploadService, ApiUploadService>(
             ?? "http://localhost:5089/");
     });
 
-// 新增：異常佇列 API
-// 取代原本 MockExceptionService 註冊
+// 異常佇列 API（取代原本 MockExceptionService 註冊）
 builder.Services.AddHttpClient<
     IExceptionService, ApiExceptionService>(
     client =>
@@ -70,6 +68,16 @@ builder.Services.AddHttpClient<
         var access = services.GetRequiredService<LocalDevelopmentAccess>();
         return builder.Environment.IsDevelopment() ? access.CreateHandler() : new SocketsHttpHandler();
     }).RedactLoggedHeaders(_ => true);
+
+// 待覆核 API（取代原本 MockCaseService 作為 ICaseService 實作）
+builder.Services.AddHttpClient<
+    ICaseService, ApiCaseService>(
+    client =>
+    {
+        client.BaseAddress = new Uri(
+            builder.Configuration["ApiSettings:BaseUrl"]
+            ?? "http://localhost:5089/");
+    });
 
 // ==========================================
 // 4. 其他 Mock 服務

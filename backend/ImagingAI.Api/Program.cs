@@ -26,6 +26,7 @@ builder.Services.AddDbContext<ImagingAiDbContext>(options =>
 
 // Controller 註冊
 // 新增：Enum 使用文字格式傳送
+
 builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
@@ -34,6 +35,7 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddScoped<ReviewService>();
 
 // Swagger 設定（保留原本設定）
 builder.Services.AddSwaggerGen(options =>

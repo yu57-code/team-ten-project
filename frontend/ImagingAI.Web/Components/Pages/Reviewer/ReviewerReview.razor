@@ -5,6 +5,7 @@
 @inject IAuthService Auth
 @inject ISnackbar Snackbar
 @inject NavigationManager Nav
+@inject IConfiguration Configuration
 @inject ImagingAI.Web.Services.BrowserDownloadService Downloader
 
 <PageTitle>待覆核｜影像病例結構化平台</PageTitle>
@@ -120,6 +121,13 @@ else
             </div>
             <div class="sheet-wrap">
                 <div class="sheet">
+                    <div style="margin-bottom: 14px; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; background: #f8fafc;">
+                        <img src="@GetDeidentifiedPageImageUrl()"
+                             alt="@($"第 {_page} 頁去識別化原始文件")"
+                             style="width: 100%; height: auto; display: block;"
+                             onerror="this.parentElement.style.display='none'" />
+                    </div>
+
                     @if (CurrentPage is null)
                     {
                         <p class="sheet-empty">尚無原始文件內容。串接後會顯示地端 OCR 與 Presidio 去識別化後的文字。</p>
@@ -438,6 +446,13 @@ else
 
     private ObservationRow? FirstUnmapped => _detail?.Observations.FirstOrDefault(o => !o.CodeMapped);
 
+    private string GetDeidentifiedPageImageUrl()
+    {
+        if (_detail is null) return string.Empty;
+        var apiBase = (Configuration["ApiSettings:BaseUrl"] ?? "http://localhost:5142/").TrimEnd('/');
+        return $"{apiBase}/api/reviews/{_detail.CaseId}/pages/{_page}/image";
+    }
+
     protected override async Task OnParametersSetAsync()
     {
         _loading = true;
@@ -489,7 +504,6 @@ else
 
     private static IEnumerable<(string Text, bool IsMask)> Tokenize(string text)
     {
-        // Regex.Split 搭配擷取群組：偶數索引是一般文字、奇數索引是遮蔽類型
         var parts = MaskPattern.Split(text);
         for (var i = 0; i < parts.Length; i++)
         {
